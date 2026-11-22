@@ -36,7 +36,10 @@ impl Config {
                 return Err(format!("user {} is listed twice", u.name));
             }
             if u.session_minutes > 0 && u.break_minutes == 0 {
-                return Err(format!("user {}: break_minutes must be > 0 when session_minutes is set", u.name));
+                return Err(format!(
+                    "user {}: break_minutes must be > 0 when session_minutes is set",
+                    u.name
+                ));
             }
         }
         Ok(cfg)
@@ -58,7 +61,10 @@ pub struct WebConfig {
 
 impl Default for WebConfig {
     fn default() -> Self {
-        WebConfig { enabled: true, listen: default_listen() }
+        WebConfig {
+            enabled: true,
+            listen: default_listen(),
+        }
     }
 }
 
@@ -117,15 +123,23 @@ pub struct Window {
 }
 
 impl Window {
-    pub const ALL_DAY: Window = Window { start: 0, end: 1440 };
+    pub const ALL_DAY: Window = Window {
+        start: 0,
+        end: 1440,
+    };
 
     pub fn parse(s: &str) -> Result<Window, String> {
         let (a, b) = s
             .split_once('-')
             .ok_or_else(|| format!("{s:?}: expected HH:MM-HH:MM or \"none\""))?;
-        let w = Window { start: parse_hhmm(a.trim())?, end: parse_hhmm(b.trim())? };
+        let w = Window {
+            start: parse_hhmm(a.trim())?,
+            end: parse_hhmm(b.trim())?,
+        };
         if w.end <= w.start {
-            return Err(format!("{s:?}: end must be after start (windows can't cross midnight; use 24:00)"));
+            return Err(format!(
+                "{s:?}: end must be after start (windows can't cross midnight; use 24:00)"
+            ));
         }
         Ok(w)
     }
@@ -133,12 +147,21 @@ impl Window {
 
 impl fmt::Display for Window {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:02}:{:02}-{:02}:{:02}", self.start / 60, self.start % 60, self.end / 60, self.end % 60)
+        write!(
+            f,
+            "{:02}:{:02}-{:02}:{:02}",
+            self.start / 60,
+            self.start % 60,
+            self.end / 60,
+            self.end % 60
+        )
     }
 }
 
 fn parse_hhmm(s: &str) -> Result<u32, String> {
-    let (h, m) = s.split_once(':').ok_or_else(|| format!("{s:?}: expected HH:MM"))?;
+    let (h, m) = s
+        .split_once(':')
+        .ok_or_else(|| format!("{s:?}: expected HH:MM"))?;
     let h: u32 = h.parse().map_err(|_| format!("{s:?}: bad hour"))?;
     let m: u32 = m.parse().map_err(|_| format!("{s:?}: bad minute"))?;
     if m > 59 || h > 24 || (h == 24 && m != 0) {
@@ -159,7 +182,9 @@ pub struct Schedule {
 
 impl Default for Schedule {
     fn default() -> Self {
-        Schedule { days: [Some(Window::ALL_DAY); 7] }
+        Schedule {
+            days: [Some(Window::ALL_DAY); 7],
+        }
     }
 }
 
@@ -218,9 +243,27 @@ mod tests {
         assert_eq!(u.break_minutes, 120);
         assert_eq!(u.warn_minutes, 5);
         assert_eq!(u.action, Action::Logout);
-        assert_eq!(u.schedule.days[0], Some(Window { start: 480, end: 1200 }));
-        assert_eq!(u.schedule.days[4], Some(Window { start: 480, end: 1320 }));
-        assert_eq!(u.schedule.days[6], Some(Window { start: 480, end: 1200 }));
+        assert_eq!(
+            u.schedule.days[0],
+            Some(Window {
+                start: 480,
+                end: 1200
+            })
+        );
+        assert_eq!(
+            u.schedule.days[4],
+            Some(Window {
+                start: 480,
+                end: 1320
+            })
+        );
+        assert_eq!(
+            u.schedule.days[6],
+            Some(Window {
+                start: 480,
+                end: 1200
+            })
+        );
         assert_eq!(cfg.web.listen, "0.0.0.0:9000");
     }
 
@@ -230,7 +273,9 @@ mod tests {
         assert!(Window::parse("08:00").is_err());
         assert!(Window::parse("08:00-24:01").is_err());
         assert_eq!(Window::parse("00:00-24:00").unwrap(), Window::ALL_DAY);
-        assert!(Config::parse("[[user]]\nname='a'\n[user.schedule]\nmonday='08:00-09:00'").is_err());
+        assert!(
+            Config::parse("[[user]]\nname='a'\n[user.schedule]\nmonday='08:00-09:00'").is_err()
+        );
         assert!(Config::parse("[[user]]\nname='a'\n[[user]]\nname='a'").is_err());
     }
 

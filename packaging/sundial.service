@@ -1,0 +1,21 @@
+[Unit]
+Description=Sundial screen time limits
+Documentation=https://github.com/kz6fittycent/sundial
+After=systemd-logind.service network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/sundial daemon
+Restart=always
+RestartSec=2
+RuntimeDirectory=sundial
+RuntimeDirectoryPreserve=yes
+StateDirectory=sundial
+StateDirectoryMode=0700
+ConfigurationDirectory=sundial
+ProtectSystem=yes
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

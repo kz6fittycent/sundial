@@ -67,7 +67,11 @@ impl State {
     }
 
     pub fn log(&mut self, ts: i64, user: &str, text: impl Into<String>) {
-        self.log.push(LogEntry { ts, user: user.to_string(), text: text.into() });
+        self.log.push(LogEntry {
+            ts,
+            user: user.to_string(),
+            text: text.into(),
+        });
         if self.log.len() > LOG_KEEP {
             let extra = self.log.len() - LOG_KEEP;
             self.log.drain(..extra);

@@ -4,6 +4,7 @@ description = "Screen time limits for Linux desktop accounts, with a LAN parent 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 sundial-core.workspace = true

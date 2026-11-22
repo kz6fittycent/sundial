@@ -4,6 +4,7 @@ description = "Sundial's in-session helper: time-left notices and the countdown 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 sundial-core.workspace = true

@@ -1,0 +1,7 @@
+Name: Sundial screen time limits (sundial-managed group only)
+Default: yes
+Priority: 192
+Account-Type: Additional
+Account:
+	[success=1 default=ignore] pam_succeed_if.so quiet user notingroup sundial-managed
+	required pam_exec.so quiet stdout /usr/local/bin/sundial check-login

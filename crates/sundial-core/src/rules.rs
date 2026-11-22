@@ -35,7 +35,10 @@ pub enum Reason {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum Verdict {
     /// `until` = when the current allowed stretch ends (None = no limit in sight).
-    Allowed { until: Option<i64>, limit: Option<Limit> },
+    Allowed {
+        until: Option<i64>,
+        limit: Option<Limit>,
+    },
     /// `until` = when the account may be used again (None = not within a week).
     Blocked { reason: Reason, until: Option<i64> },
 }
@@ -69,8 +72,14 @@ fn day_index(d: NaiveDate) -> usize {
 
 /// Unix time of `minute` minutes after midnight on `d` (1440 = next midnight).
 fn at_minute<Tz: TimeZone>(tz: &Tz, d: NaiveDate, minute: u32) -> i64 {
-    let (d, minute) = if minute >= 1440 { (d + Duration::days(1), minute - 1440) } else { (d, minute) };
-    let naive = d.and_hms_opt(minute / 60, minute % 60, 0).expect("valid time");
+    let (d, minute) = if minute >= 1440 {
+        (d + Duration::days(1), minute - 1440)
+    } else {
+        (d, minute)
+    };
+    let naive = d
+        .and_hms_opt(minute / 60, minute % 60, 0)
+        .expect("valid time");
     match tz.from_local_datetime(&naive) {
         LocalResult::Single(t) => t.timestamp(),
         LocalResult::Ambiguous(a, _) => a.timestamp(),
@@ -122,10 +131,14 @@ const HORIZON: i64 = 7 * 86_400;
 
 pub fn evaluate<Tz: TimeZone>(p: &UserPolicy, s: &UserState, now: &DateTime<Tz>) -> Verdict {
     let t = now.timestamp();
-    if let Some(b) = s.block {
-        if b.from <= t && t < b.until {
-            return Verdict::Blocked { reason: Reason::ParentLock, until: Some(b.until) };
-        }
+    if let Some(b) = s.block
+        && b.from <= t
+        && t < b.until
+    {
+        return Verdict::Blocked {
+            reason: Reason::ParentLock,
+            until: Some(b.until),
+        };
     }
     let mut ends: Vec<(i64, Limit)> = Vec::new();
     if let Some(b) = s.block.filter(|b| b.from > t) {
@@ -137,10 +150,16 @@ pub fn evaluate<Tz: TimeZone>(p: &UserPolicy, s: &UserState, now: &DateTime<Tz>)
     }
     let iv = intervals(p, now);
     let Some(&(_, end)) = iv.iter().find(|(st, e)| *st <= t && t < *e) else {
-        return Verdict::Blocked { reason: Reason::OutsideHours, until: next_allowed(&iv, t) };
+        return Verdict::Blocked {
+            reason: Reason::OutsideHours,
+            until: next_allowed(&iv, t),
+        };
     };
     if let Some(bu) = s.break_until.filter(|&b| b > t) {
-        return Verdict::Blocked { reason: Reason::Break, until: next_allowed(&iv, bu) };
+        return Verdict::Blocked {
+            reason: Reason::Break,
+            until: next_allowed(&iv, bu),
+        };
     }
     if end - t <= HORIZON {
         ends.push((end, Limit::Bedtime));
@@ -154,8 +173,14 @@ pub fn evaluate<Tz: TimeZone>(p: &UserPolicy, s: &UserState, now: &DateTime<Tz>)
 
 fn soonest(ends: Vec<(i64, Limit)>) -> Verdict {
     match ends.into_iter().min_by_key(|e| e.0) {
-        Some((until, limit)) => Verdict::Allowed { until: Some(until), limit: Some(limit) },
-        None => Verdict::Allowed { until: None, limit: None },
+        Some((until, limit)) => Verdict::Allowed {
+            until: Some(until),
+            limit: Some(limit),
+        },
+        None => Verdict::Allowed {
+            until: None,
+            limit: None,
+        },
     }
 }
 
@@ -198,13 +223,14 @@ where
             s.today_active_secs += active_secs;
         }
         s.last_active = Some(t);
-    } else if p.session_minutes > 0 && s.used_secs > 0 && s.break_until.is_none() {
-        if let Some(la) = s.last_active {
-            if t - la >= i64::from(p.break_minutes) * 60 {
-                s.used_secs = 0;
-                ev.push("away long enough; fresh session".to_string());
-            }
-        }
+    } else if p.session_minutes > 0
+        && s.used_secs > 0
+        && s.break_until.is_none()
+        && let Some(la) = s.last_active
+        && t - la >= i64::from(p.break_minutes) * 60
+    {
+        s.used_secs = 0;
+        ev.push("away long enough; fresh session".to_string());
     }
 
     let allow_active = s.allow_until.is_some_and(|a| a > t);
@@ -213,13 +239,21 @@ where
         let until = t + i64::from(p.break_minutes) * 60;
         s.break_until = Some(until);
         s.used_secs = 0;
-        ev.push(format!("session used up; break until {}", fmt_when(until, now)));
+        ev.push(format!(
+            "session used up; break until {}",
+            fmt_when(until, now)
+        ));
     }
     ev
 }
 
 /// Apply a parent's override. Returns a description for the log.
-pub fn apply<Tz: TimeZone>(p: &UserPolicy, s: &mut UserState, now: &DateTime<Tz>, o: Override) -> String
+pub fn apply<Tz: TimeZone>(
+    p: &UserPolicy,
+    s: &mut UserState,
+    now: &DateTime<Tz>,
+    o: Override,
+) -> String
 where
     Tz::Offset: Display,
 {
@@ -228,7 +262,9 @@ where
         Override::Grant { minutes } => {
             let base = match evaluate(p, s, now) {
                 Verdict::Allowed { until: Some(u), .. } => u.max(t),
-                Verdict::Allowed { until: None, .. } => return "no limit right now; nothing to add".into(),
+                Verdict::Allowed { until: None, .. } => {
+                    return "no limit right now; nothing to add".into();
+                }
                 Verdict::Blocked { .. } => t,
             };
             let until = base + i64::from(minutes) * 60;
@@ -236,7 +272,10 @@ where
             if s.block.is_some_and(|b| b.from <= until) {
                 s.block = None;
             }
-            format!("granted {minutes} min; allowed until {}", fmt_when(until, now))
+            format!(
+                "granted {minutes} min; allowed until {}",
+                fmt_when(until, now)
+            )
         }
         Override::EndBreak => {
             s.break_until = None;
@@ -250,13 +289,20 @@ where
         }
         Override::Lock { in_secs, until } => {
             let from = t + i64::from(in_secs);
-            let until = until.or_else(|| next_day_start(p, now)).unwrap_or(t + 86_400).max(from + 60);
+            let until = until
+                .or_else(|| next_day_start(p, now))
+                .unwrap_or(t + 86_400)
+                .max(from + 60);
             s.block = Some(Block { from, until });
             s.allow_until = None;
             if in_secs == 0 {
                 format!("locked now until {}", fmt_when(until, now))
             } else {
-                format!("lock at {} until {}", fmt_when(from, now), fmt_when(until, now))
+                format!(
+                    "lock at {} until {}",
+                    fmt_when(from, now),
+                    fmt_when(until, now)
+                )
             }
         }
         Override::Clear => {
@@ -273,7 +319,9 @@ where
     Tz::Offset: Display,
 {
     let tz = now.timezone();
-    let Some(dt) = tz.timestamp_opt(ts, 0).single() else { return ts.to_string() };
+    let Some(dt) = tz.timestamp_opt(ts, 0).single() else {
+        return ts.to_string();
+    };
     let clock = dt.format("%-I:%M %p").to_string();
     let days = (dt.date_naive() - now.date_naive()).num_days();
     match days {
@@ -305,17 +353,28 @@ where
     let t = now.timestamp();
     match *v {
         Verdict::Allowed { until: None, .. } => "No limit right now.".into(),
-        Verdict::Allowed { until: Some(u), limit } => {
+        Verdict::Allowed {
+            until: Some(u),
+            limit,
+        } => {
             let left = fmt_duration(u - t);
             match limit {
                 Some(Limit::Session) => format!("{left} left, then a break."),
-                Some(Limit::Bedtime) => format!("{left} left; computer time ends at {}.", fmt_when(u, now)),
-                Some(Limit::ParentLock) => format!("{left} left; a parent set a lock at {}.", fmt_when(u, now)),
-                Some(Limit::ParentAllow) | None => format!("{left} left (extra time from a parent)."),
+                Some(Limit::Bedtime) => {
+                    format!("{left} left; computer time ends at {}.", fmt_when(u, now))
+                }
+                Some(Limit::ParentLock) => {
+                    format!("{left} left; a parent set a lock at {}.", fmt_when(u, now))
+                }
+                Some(Limit::ParentAllow) | None => {
+                    format!("{left} left (extra time from a parent).")
+                }
             }
         }
         Verdict::Blocked { reason, until } => {
-            let when = until.map(|u| fmt_when(u, now)).unwrap_or_else(|| "later".into());
+            let when = until
+                .map(|u| fmt_when(u, now))
+                .unwrap_or_else(|| "later".into());
             match reason {
                 Reason::Break => format!("Break time. Back at {when}."),
                 Reason::OutsideHours => format!("Computer time is over. Back at {when}."),
@@ -361,7 +420,13 @@ mod tests {
     }
 
     /// Run active (or idle) ticks of 5 s from `from` for `secs`.
-    fn run(p: &UserPolicy, s: &mut UserState, from: DateTime<FixedOffset>, secs: i64, active: bool) -> DateTime<FixedOffset> {
+    fn run(
+        p: &UserPolicy,
+        s: &mut UserState,
+        from: DateTime<FixedOffset>,
+        secs: i64,
+        active: bool,
+    ) -> DateTime<FixedOffset> {
         let mut now = from;
         for _ in 0..secs / 5 {
             now += Duration::seconds(5);
@@ -373,29 +438,59 @@ mod tests {
     #[test]
     fn before_eight_is_blocked() {
         let v = evaluate(&policy(), &UserState::default(), &at(23, 7, 30));
-        assert_eq!(v, Verdict::Blocked { reason: Reason::OutsideHours, until: Some(ts(23, 8, 0)) });
+        assert_eq!(
+            v,
+            Verdict::Blocked {
+                reason: Reason::OutsideHours,
+                until: Some(ts(23, 8, 0))
+            }
+        );
     }
 
     #[test]
     fn fresh_morning_gets_an_hour() {
         let v = evaluate(&policy(), &UserState::default(), &at(23, 8, 0));
-        assert_eq!(v, Verdict::Allowed { until: Some(ts(23, 9, 0)), limit: Some(Limit::Session) });
+        assert_eq!(
+            v,
+            Verdict::Allowed {
+                until: Some(ts(23, 9, 0)),
+                limit: Some(Limit::Session)
+            }
+        );
     }
 
     #[test]
     fn bedtime_cuts_the_session_short() {
         let v = evaluate(&policy(), &UserState::default(), &at(23, 19, 30));
-        assert_eq!(v, Verdict::Allowed { until: Some(ts(23, 20, 0)), limit: Some(Limit::Bedtime) });
+        assert_eq!(
+            v,
+            Verdict::Allowed {
+                until: Some(ts(23, 20, 0)),
+                limit: Some(Limit::Bedtime)
+            }
+        );
         // Friday runs to 22:00.
         let v = evaluate(&policy(), &UserState::default(), &at(27, 21, 30));
-        assert_eq!(v, Verdict::Allowed { until: Some(ts(27, 22, 0)), limit: Some(Limit::Bedtime) });
+        assert_eq!(
+            v,
+            Verdict::Allowed {
+                until: Some(ts(27, 22, 0)),
+                limit: Some(Limit::Bedtime)
+            }
+        );
     }
 
     #[test]
     fn sunday_night_waits_for_monday() {
         // 2026-11-29 is a Sunday; stop at 20:00.
         let v = evaluate(&policy(), &UserState::default(), &at(29, 20, 0));
-        assert_eq!(v, Verdict::Blocked { reason: Reason::OutsideHours, until: Some(ts(30, 8, 0)) });
+        assert_eq!(
+            v,
+            Verdict::Blocked {
+                reason: Reason::OutsideHours,
+                until: Some(ts(30, 8, 0))
+            }
+        );
         // Saturday 21:00 is still fine.
         assert!(evaluate(&policy(), &UserState::default(), &at(28, 21, 0)).is_allowed());
     }
@@ -406,11 +501,23 @@ mod tests {
         let mut s = UserState::default();
         let now = run(&p, &mut s, at(23, 8, 0), 3600, true);
         assert_eq!(s.break_until, Some(ts(23, 11, 0)));
-        assert_eq!(evaluate(&p, &s, &now), Verdict::Blocked { reason: Reason::Break, until: Some(ts(23, 11, 0)) });
+        assert_eq!(
+            evaluate(&p, &s, &now),
+            Verdict::Blocked {
+                reason: Reason::Break,
+                until: Some(ts(23, 11, 0))
+            }
+        );
         // Idle through the break, then a fresh hour.
         let now = run(&p, &mut s, now, 7200, false);
         assert_eq!(s.break_until, None);
-        assert_eq!(evaluate(&p, &s, &now), Verdict::Allowed { until: Some(ts(23, 12, 0)), limit: Some(Limit::Session) });
+        assert_eq!(
+            evaluate(&p, &s, &now),
+            Verdict::Allowed {
+                until: Some(ts(23, 12, 0)),
+                limit: Some(Limit::Session)
+            }
+        );
         assert_eq!(s.today_active_secs, 3600);
     }
 
@@ -419,7 +526,13 @@ mod tests {
         let p = policy();
         let mut s = UserState::default();
         let now = run(&p, &mut s, at(23, 18, 0), 3600, true);
-        assert_eq!(evaluate(&p, &s, &now), Verdict::Blocked { reason: Reason::Break, until: Some(ts(24, 8, 0)) });
+        assert_eq!(
+            evaluate(&p, &s, &now),
+            Verdict::Blocked {
+                reason: Reason::Break,
+                until: Some(ts(24, 8, 0))
+            }
+        );
     }
 
     #[test]
@@ -431,7 +544,13 @@ mod tests {
         assert_eq!(s.used_secs, 1200);
         let now = run(&p, &mut s, now, 3600, false);
         assert_eq!(s.used_secs, 0, "2 h away refills the session");
-        assert_eq!(evaluate(&p, &s, &now), Verdict::Allowed { until: Some(now.timestamp() + 3600), limit: Some(Limit::Session) });
+        assert_eq!(
+            evaluate(&p, &s, &now),
+            Verdict::Allowed {
+                until: Some(now.timestamp() + 3600),
+                limit: Some(Limit::Session)
+            }
+        );
     }
 
     #[test]
@@ -455,7 +574,13 @@ mod tests {
         let mut s = UserState::default();
         let now = at(23, 20, 5);
         apply(&p, &mut s, &now, Override::Grant { minutes: 30 });
-        assert_eq!(evaluate(&p, &s, &now), Verdict::Allowed { until: Some(ts(23, 20, 35)), limit: Some(Limit::ParentAllow) });
+        assert_eq!(
+            evaluate(&p, &s, &now),
+            Verdict::Allowed {
+                until: Some(ts(23, 20, 35)),
+                limit: Some(Limit::ParentAllow)
+            }
+        );
         assert!(!evaluate(&p, &s, &at(23, 20, 36)).is_allowed());
     }
 
@@ -464,11 +589,28 @@ mod tests {
         let p = policy();
         let mut s = UserState::default();
         let now = at(23, 10, 0);
-        apply(&p, &mut s, &now, Override::Lock { in_secs: 300, until: None });
-        assert_eq!(evaluate(&p, &s, &now), Verdict::Allowed { until: Some(ts(23, 10, 5)), limit: Some(Limit::ParentLock) });
+        apply(
+            &p,
+            &mut s,
+            &now,
+            Override::Lock {
+                in_secs: 300,
+                until: None,
+            },
+        );
+        assert_eq!(
+            evaluate(&p, &s, &now),
+            Verdict::Allowed {
+                until: Some(ts(23, 10, 5)),
+                limit: Some(Limit::ParentLock)
+            }
+        );
         assert_eq!(
             evaluate(&p, &s, &at(23, 10, 5)),
-            Verdict::Blocked { reason: Reason::ParentLock, until: Some(ts(24, 8, 0)) }
+            Verdict::Blocked {
+                reason: Reason::ParentLock,
+                until: Some(ts(24, 8, 0))
+            }
         );
         apply(&p, &mut s, &now, Override::Clear);
         assert!(evaluate(&p, &s, &at(23, 10, 5)).is_allowed());
@@ -481,13 +623,28 @@ mod tests {
         let now = run(&p, &mut s, at(23, 8, 0), 3600, true);
         assert!(!evaluate(&p, &s, &now).is_allowed());
         apply(&p, &mut s, &now, Override::EndBreak);
-        assert_eq!(evaluate(&p, &s, &now), Verdict::Allowed { until: Some(now.timestamp() + 3600), limit: Some(Limit::Session) });
+        assert_eq!(
+            evaluate(&p, &s, &now),
+            Verdict::Allowed {
+                until: Some(now.timestamp() + 3600),
+                limit: Some(Limit::Session)
+            }
+        );
     }
 
     #[test]
     fn no_limits_configured() {
-        let p = Config::parse("[[user]]\nname='a'\nsession_minutes=0").unwrap().users.remove(0);
-        assert_eq!(evaluate(&p, &UserState::default(), &at(23, 3, 0)), Verdict::Allowed { until: None, limit: None });
+        let p = Config::parse("[[user]]\nname='a'\nsession_minutes=0")
+            .unwrap()
+            .users
+            .remove(0);
+        assert_eq!(
+            evaluate(&p, &UserState::default(), &at(23, 3, 0)),
+            Verdict::Allowed {
+                until: None,
+                limit: None
+            }
+        );
     }
 
     #[test]

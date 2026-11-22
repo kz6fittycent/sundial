@@ -25,7 +25,11 @@ pub struct AgentStatus {
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum AdminRequest {
     Status,
-    Act { user: String, by: String, action: Override },
+    Act {
+        user: String,
+        by: String,
+        action: Override,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Sundial
+Comment=Screen time left
+Exec=/usr/local/bin/sundial-agent
+Icon=alarm-symbolic
+NoDisplay=true
+DBusActivatable=false
+X-GNOME-UsesNotifications=true

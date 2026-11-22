@@ -4,6 +4,7 @@ description = "Sundial rules engine: schedules, session/break accounting, parent
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 chrono.workspace = true
