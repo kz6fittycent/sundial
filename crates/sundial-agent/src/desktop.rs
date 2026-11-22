@@ -41,32 +41,29 @@ const AGENT_XML: &str = r#"<node>
 
 const KWIN_SCRIPT_NAME: &str = "sundial-activity";
 const KWIN_SCRIPT: &str = r#"// Sundial: tell the Sundial agent which window is active (Plasma 5 and 6).
+// Title changes are hooked per window when it appears; windows are often
+// activated before their title is set.
 const S = "io.github.kz6fittycent.Sundial.Agent";
 const P = "/io/github/kz6fittycent/Sundial/Agent";
-let current = null;
+function active() {
+    return workspace.activeWindow !== undefined ? workspace.activeWindow : workspace.activeClient;
+}
 function send(w) {
     callDBus(S, P, S, "SetFocus",
         w ? String(w.desktopFileName || "") : "",
         w ? String(w.resourceClass || "") : "",
         w ? String(w.caption || "") : "");
 }
-function onCaption() { send(current); }
-function onActivated(w) {
-    if (current && current.captionChanged) {
-        try { current.captionChanged.disconnect(onCaption); } catch (e) {}
-    }
-    current = w;
+function hook(w) {
     if (w && w.captionChanged)
-        w.captionChanged.connect(onCaption);
-    send(w);
+        w.captionChanged.connect(function () { if (active() === w) send(w); });
 }
-if (workspace.windowActivated) {
-    workspace.windowActivated.connect(onActivated);
-    onActivated(workspace.activeWindow);
-} else {
-    workspace.clientActivated.connect(onActivated);
-    onActivated(workspace.activeClient);
-}
+const list = workspace.windowList ? workspace.windowList() : workspace.clientList();
+for (let i = 0; i < list.length; i++)
+    hook(list[i]);
+(workspace.windowAdded || workspace.clientAdded).connect(hook);
+(workspace.windowActivated || workspace.clientActivated).connect(send);
+send(active());
 "#;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

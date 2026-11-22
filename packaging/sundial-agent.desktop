@@ -5,5 +5,3 @@ Comment=Screen time notices and countdown
 Exec=/usr/local/bin/sundial-agent
 Icon=alarm-symbolic
 NoDisplay=true
-X-GNOME-Autostart-Phase=Applications
-X-GNOME-AutoRestart=true

@@ -264,6 +264,8 @@ fn build(app: &gtk::Application) {
 }
 
 fn main() -> glib::ExitCode {
+    glib::set_application_name("Sundial");
+    glib::set_prgname(Some("sundial"));
     let app = gtk::Application::builder().application_id(APP_ID).build();
     app.connect_startup(|app| {
         // No window most of the time; stay running anyway.

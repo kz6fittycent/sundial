@@ -76,16 +76,21 @@ fn is_browser(f: &Focus) -> bool {
     BROWSERS.iter().any(|b| app.contains(b))
 }
 
-/// "(3) Video - YouTube — Mozilla Firefox" -> "Video - YouTube".
-fn page_title(title: &str) -> String {
-    let mut t = title.trim();
-    // Unread-count prefix: "(3) ".
+/// Drop an unread-count prefix: "(3) Video" -> "Video".
+fn strip_count(t: &str) -> &str {
     if let Some(rest) = t.strip_prefix('(')
         && let Some((n, after)) = rest.split_once(") ")
+        && !n.is_empty()
         && n.chars().all(|c| c.is_ascii_digit())
     {
-        t = after;
+        return after;
     }
+    t
+}
+
+/// "(3) Some page — Mozilla Firefox" -> "Some page".
+fn page_title(title: &str) -> String {
+    let mut t = strip_count(title.trim());
     for sep in [" — ", " - ", " – "] {
         if let Some((head, tail)) = t.rsplit_once(sep) {
             let tail_l = tail.to_lowercase();
@@ -98,28 +103,16 @@ fn page_title(title: &str) -> String {
     t.trim().to_string()
 }
 
-/// "Video - YouTube" -> Some("Video"); "YouTube" -> None.
-fn strip_site(title: &str, site: &str) -> Option<String> {
-    let lower = title.to_lowercase();
-    let site_l = site.to_lowercase();
-    let mut t = title.to_string();
-    for sep in [" - ", " | ", " — ", " – ", ": "] {
-        let suffix = format!("{sep}{site_l}");
-        if lower.ends_with(&suffix) {
-            t = title[..title.len() - suffix.len()].to_string();
-            break;
-        }
-    }
-    let t = t.trim();
-    (!t.is_empty() && !t.eq_ignore_ascii_case(site)).then(|| t.to_string())
-}
-
 /// Name the activity. None = nothing in front (no window focused).
 pub fn classify(f: &Focus, rules: &[ActivityRule]) -> Option<Classified> {
     if f.app_id.is_empty() && f.app_name.is_empty() && f.title.is_empty() {
         return None;
     }
     let hay = format!("{} {} {}", f.app_id, f.app_name, f.title).to_lowercase();
+    // Sundial's own countdown window isn't an activity.
+    if hay.contains("kz6fittycent.sundial") {
+        return None;
+    }
     let detail = (!f.title.trim().is_empty()).then(|| f.title.trim().to_string());
     for r in rules {
         if r.patterns
@@ -139,16 +132,24 @@ pub fn classify(f: &Focus, rules: &[ActivityRule]) -> Option<Classified> {
         });
     }
     if is_browser(f) {
-        let page = page_title(&f.title);
-        let page_l = page.to_lowercase();
+        // Match the site anywhere in the raw title (separators and encodings vary), and
+        // take the text before it as the video/page name.
+        let raw = strip_count(f.title.trim());
+        let raw_l = raw.to_ascii_lowercase(); // same byte offsets as `raw`
         for (site, pats) in SITES {
-            if pats.iter().any(|p| page_l.contains(p)) {
+            if let Some(i) = pats.iter().filter_map(|p| raw_l.find(p)).min() {
+                let before = raw[..i]
+                    .trim_end_matches(|c: char| {
+                        c.is_whitespace() || "-|:\u{2014}\u{2013}\u{e2}\u{20ac}\u{201d}".contains(c)
+                    })
+                    .trim();
                 return Some(Classified {
                     name: (*site).into(),
-                    detail: strip_site(&page, site),
+                    detail: (!before.is_empty()).then(|| before.to_string()),
                 });
             }
         }
+        let page = page_title(&f.title);
         return Some(Classified {
             name: "Web browsing".into(),
             detail: (!page.is_empty()).then_some(page),
@@ -261,6 +262,23 @@ mod tests {
             .0,
             "Netflix"
         );
+        // Mangled em dash (title read as Latin-1) still classifies.
+        assert_eq!(
+            c(&f(
+                "debian-xterm",
+                "firefox",
+                "Ninth Video - YouTube \u{e2}\u{20ac}\u{201d} Mozilla Firefox"
+            )),
+            ("YouTube".into(), Some("Ninth Video".into()))
+        );
+        assert_eq!(
+            c(&f(
+                "firefox",
+                "Firefox",
+                "My Netflix review | YouTube — Mozilla Firefox"
+            )),
+            ("YouTube".into(), Some("My Netflix review".into()))
+        );
     }
 
     #[test]
@@ -279,6 +297,13 @@ mod tests {
         );
         assert_eq!(c(&f("steam.desktop", "", "Steam")), ("steam".into(), None));
         assert!(classify(&f("", "", ""), &[]).is_none());
+        assert!(
+            classify(
+                &f("io.github.kz6fittycent.Sundial", "Sundial", "Sundial"),
+                &[]
+            )
+            .is_none()
+        );
     }
 
     #[test]
