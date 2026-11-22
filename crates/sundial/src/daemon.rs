@@ -150,7 +150,7 @@ impl Daemon {
         for p in self.cfg.users.clone() {
             let mine: Vec<&logind::Session> =
                 self.sessions.iter().filter(|s| s.user == p.name).collect();
-            let in_use = mine.iter().any(|s| s.in_use());
+            let in_use = mine.iter().any(|s| s.in_use()) && !self.agent_says_away(&p, t);
             let has_sessions = !mine.is_empty();
             let unlocked: Vec<String> = mine
                 .iter()
@@ -301,6 +301,7 @@ impl Daemon {
                 policy: PolicyUpdate::from_policy(p),
                 track_activity: p.track_activity,
                 tracking: self.tracking(p, !sessions.is_empty(), t),
+                tracking_source: self.tracking_source(p, t),
                 now_doing: self.now_doing(p, &sessions, t),
                 activity_today: activity_lines(&us, &now, 1, 6),
                 activity_week: activity_lines(&us, &now, 7, 0),
@@ -322,14 +323,48 @@ impl Daemon {
             return Tracking::NoAgent;
         }
         match self.reports.get(&p.name) {
-            Some((ts, rep)) if t - ts <= REPORT_FRESH_SECS && rep.extension => Tracking::Ok,
+            Some((ts, rep)) if t - ts <= REPORT_FRESH_SECS && rep.focus_ok => Tracking::Ok,
             _ => Tracking::NoExtension,
         }
+    }
+
+    /// A fresh agent report says the screen is locked, or nobody has touched the
+    /// keyboard/mouse for `idle_minutes` with no media playing. This covers desktops
+    /// that don't report idle/lock to logind (most besides GNOME and Plasma).
+    fn agent_says_away(&self, p: &UserPolicy, t: i64) -> bool {
+        let Some((ts, rep)) = self.reports.get(&p.name) else {
+            return false;
+        };
+        if t - ts > REPORT_FRESH_SECS {
+            return false;
+        }
+        let idle = rep
+            .idle_secs
+            .is_some_and(|i| i >= u64::from(p.idle_minutes) * 60 && !rep.media_playing);
+        rep.locked == Some(true) || idle
+    }
+
+    fn tracking_source(&self, p: &UserPolicy, t: i64) -> Option<String> {
+        self.reports
+            .get(&p.name)
+            .filter(|(ts, _)| t - ts <= REPORT_FRESH_SECS)
+            .map(|(_, r)| r.source.clone())
+            .filter(|s| !s.is_empty())
     }
 
     fn now_doing(&self, p: &UserPolicy, sessions: &[SessionInfo], t: i64) -> Option<String> {
         if !p.track_activity || sessions.is_empty() {
             return None;
+        }
+        if let Some((ts, rep)) = self.reports.get(&p.name)
+            && t - ts <= REPORT_FRESH_SECS
+        {
+            if rep.locked == Some(true) {
+                return Some("Screen locked".into());
+            }
+            if self.agent_says_away(p, t) {
+                return Some("Idle".into());
+            }
         }
         let front = sessions.iter().find(|s| s.active);
         match front {

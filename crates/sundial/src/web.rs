@@ -509,10 +509,12 @@ fn activity_html(u: &UserStatus) -> String {
             "<p class='flash err'>Activity tracking isn't running: the Sundial agent isn't connected in the \
              signed-in session. It was closed, or the session started before Sundial was installed.</p>",
         ),
-        Tracking::NoExtension => h.push_str(
-            "<p class='flash err'>Activity tracking isn't running: the Sundial GNOME extension isn't answering. \
-             It loads at the next sign-in; if it was turned off, the agent turns it back on.</p>",
-        ),
+        Tracking::NoExtension => h.push_str(&format!(
+            "<p class='flash err'>Activity tracking isn't running: the agent is connected but can't see which \
+             window is in front ({}). On GNOME the Sundial extension loads at the next sign-in; on other \
+             desktops see the README's desktop list.</p>",
+            esc(u.tracking_source.as_deref().unwrap_or("no source"))
+        )),
         _ => {}
     }
     if let Some(now) = &u.now_doing {

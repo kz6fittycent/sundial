@@ -10,3 +10,4 @@ repository.workspace = true
 sundial-core.workspace = true
 serde_json.workspace = true
 gtk = { package = "gtk4", version = "0.10" }
+x11rb = { version = "0.13", features = ["screensaver"] }

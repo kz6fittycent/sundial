@@ -119,6 +119,10 @@ pub struct UserPolicy {
     /// Record which app or site is in front (needs the GNOME extension and the agent).
     #[serde(default = "default_true")]
     pub track_activity: bool,
+    /// No keyboard/mouse input for this long (and no media playing) = idle, not counted.
+    /// GNOME also reports idle itself, after its own blank-screen delay.
+    #[serde(default = "default_warn")]
+    pub idle_minutes: u32,
 }
 
 fn default_session() -> u32 {

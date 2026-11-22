@@ -23,8 +23,18 @@ before the session ends. Parents can change things from a phone on the home netw
   the page warns if tracking stops (extension turned off, agent closed).
 - **CLI** for the same overrides over SSH: `sudo sundial grant kid 30`.
 
-Tested on Ubuntu 26.04 with GNOME 50 (Wayland). It relies only on systemd-logind and PAM, so other
-desktops should work. The countdown window needs GTK 4.
+Limits, logout and the login check rely only on systemd-logind and PAM, so they work on any desktop.
+The agent (countdown, idle and activity) knows these desktops:
+
+| Desktop | Which window is in front | Idle | Screen locked |
+|---|---|---|---|
+| GNOME (Wayland or X11) | Sundial GNOME Shell extension | GNOME tells logind; Mutter idle monitor | logind, GNOME screensaver |
+| KDE Plasma (Wayland or X11) | a KWin script the agent loads at sign-in | `org.freedesktop.ScreenSaver` idle time | logind, Plasma screen locker |
+| Cinnamon, MATE, Xfce (X11) | X11 active window (EWMH) | X11 screensaver extension | logind, the desktop's screensaver |
+| any other X11 session | X11 active window | X11 screensaver extension | logind |
+
+Idle means no keyboard or mouse for `idle_minutes` (default 5) with no media playing, so watching a video
+isn't mistaken for walking away. The countdown window needs GTK 4.
 
 ## How it works
 
@@ -100,6 +110,7 @@ break_minutes = 120
 warn_minutes = 5         # countdown length
 action = "logout"        # or "lock"
 track_activity = true    # record which app/site is in front
+idle_minutes = 5         # no input this long (and no media playing) = not counted
 
 [user.schedule]          # mon..sun, or default; "none" = no access that day
 default = "08:00-20:00"

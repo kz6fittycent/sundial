@@ -24,11 +24,22 @@ pub struct AgentStatus {
 
 /// Agent -> daemon, every few seconds.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct AgentReport {
-    /// The focused window, if the GNOME extension answered.
+    /// The focused window, if the desktop's focus source answered.
     pub focus: Option<Focus>,
-    /// False when the extension isn't reachable (disabled, or not loaded yet).
-    pub extension: bool,
+    /// False when the focus source isn't answering (extension disabled, script not
+    /// loaded yet, unsupported desktop).
+    #[serde(alias = "extension")]
+    pub focus_ok: bool,
+    /// Where focus comes from: "GNOME extension", "KWin script", "X11", "none".
+    pub source: String,
+    /// Seconds since the last keyboard/mouse input, when the desktop tells us.
+    pub idle_secs: Option<u64>,
+    /// A media player (browser video included) is playing.
+    pub media_playing: bool,
+    /// The desktop's screen locker state, when it tells us.
+    pub locked: Option<bool>,
 }
 
 /// CLI/web -> daemon on `/run/sundial/admin.sock` (root only).
@@ -77,6 +88,8 @@ pub struct UserStatus {
     pub policy: PolicyUpdate,
     pub track_activity: bool,
     pub tracking: Tracking,
+    /// The agent's focus source ("GNOME extension", "KWin script", "X11").
+    pub tracking_source: Option<String>,
     /// "Minecraft: Minecraft* 1.21.4 - Singleplayer"
     pub now_doing: Option<String>,
     pub activity_today: Vec<ActivityLine>,
@@ -95,7 +108,8 @@ pub enum Tracking {
     Ok,
     /// Signed in but no agent connected (killed, or not autostarted).
     NoAgent,
-    /// Agent runs but the GNOME extension doesn't answer (disabled, or needs a re-login).
+    /// Agent runs but its focus source doesn't answer (GNOME extension disabled or
+    /// not loaded yet, KWin script blocked, or an unsupported desktop).
     NoExtension,
 }
 
