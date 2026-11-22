@@ -82,7 +82,7 @@ the GNOME Shell extension (`/usr/share/gnome-shell/extensions/sundial@kz6fittyce
 `pam-auth-update` profile (Debian/Ubuntu). `uninstall.sh` removes them; `PURGE=1` also removes the
 config, state and group.
 
-A snap is planned.
+A classic snap is planned (one package for every distro).
 
 ## Configuration
 
