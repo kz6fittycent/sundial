@@ -1,0 +1,24 @@
+[package]
+name = "sundial"
+description = "Screen time limits for Linux desktop accounts, with a LAN parent page"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sundial-core.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "io-util", "signal", "sync", "process", "fs"] }
+axum = { version = "0.8", features = ["form"] }
+axum-server = { version = "0.7", features = ["tls-rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rcgen = "0.13"
+argon2 = "0.5"
+rand = "0.8"
+rpassword = "7"
+sha2 = "0.10"
+libc = "0.2"

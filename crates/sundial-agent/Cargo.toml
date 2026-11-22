@@ -1,0 +1,11 @@
+[package]
+name = "sundial-agent"
+description = "Sundial's in-session helper: time-left notices and the countdown window"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sundial-core.workspace = true
+serde_json.workspace = true
+gtk = { package = "gtk4", version = "0.10" }
