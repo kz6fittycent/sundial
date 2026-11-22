@@ -9,13 +9,15 @@ use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::{Local, NaiveTime, TimeZone};
+use chrono::{Local, NaiveTime, TimeZone, Timelike};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use sundial_core::config::DEFAULT_ADMINS_PATH;
-use sundial_core::proto::{AdminRequest, AdminResponse, UserStatus};
+use sundial_core::config::{Action, DAY_KEYS, PolicyUpdate, Window};
+use sundial_core::proto::{AdminRequest, AdminResponse, Tracking, UserStatus};
 use sundial_core::rules::{Override, Reason, Verdict, fmt_duration, fmt_when};
 
 const COOKIE: &str = "sundial_session";
@@ -51,6 +53,7 @@ pub async fn serve(daemon: Shared, listen: &str) -> Result<()> {
         .route("/login", post(login))
         .route("/logout", post(logout))
         .route("/act", post(act))
+        .route("/settings", post(settings))
         .route("/api/status", get(api_status))
         .with_state(app);
     axum_server::bind_rustls(addr, tls)
@@ -247,6 +250,7 @@ fn parse_action(f: &ActForm) -> Result<Override, &'static str> {
             }
         }
         "clear" => Override::Clear,
+        "take15" => Override::TakeTime { minutes: 15 },
         _ => return Err("Unknown action."),
     })
 }
@@ -322,6 +326,16 @@ label{color:var(--muted);font-size:14px}
 .log{list-style:none;padding:0;margin:0;font-size:14px}.log li{padding:6px 0;border-top:1px solid var(--line)}.log time{color:var(--muted);margin-right:8px}
 .login{max-width:360px;margin:12vh auto 0}.login input{width:100%;margin-bottom:10px}.login button{width:100%}
 .muted{color:var(--muted);font-size:14px}
+h3{font-size:16px;margin:18px 0 6px;padding-top:12px;border-top:1px solid var(--line)}
+.acts{list-style:none;padding:0;margin:0}.acts>li{margin-bottom:10px}.acts .bar{margin:4px 0}
+.actrow{display:flex;justify-content:space-between;gap:12px}
+details{margin-top:6px}summary{cursor:pointer;color:var(--muted);font-size:14px}
+details ol{margin:6px 0 0;padding-left:22px;font-size:14px}details li{margin:2px 0}
+table{border-collapse:collapse;font-size:14px}td,th{padding:4px 10px 4px 0;text-align:left}
+.settings{margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}.settings summary{font-size:16px;color:var(--ink);font-weight:600}
+.days input[type=time]{padding:6px 8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:10px}.grid label{display:flex;flex-direction:column;gap:4px}
+.grid input,.grid select{width:100%}
 "#;
 
 fn shell(title: &str, body: &str, refresh: bool) -> String {
@@ -451,6 +465,8 @@ fn user_card(u: &UserStatus, now: &chrono::DateTime<Local>) -> String {
     };
     let end_break = if u.break_until.is_some() {
         "<button name=action value=end_break>End break</button>"
+    } else if u.session_secs > 0 && u.used_secs > 0 {
+        "<button name=action value=end_break>Reset session</button>"
     } else {
         ""
     };
@@ -468,16 +484,208 @@ fn user_card(u: &UserStatus, now: &chrono::DateTime<Local>) -> String {
          <form method=post action=/act class=row><input type=hidden name=user value=\"{name}\">\
            <button class=primary name=action value=grant15>+15 min</button>\
            <button class=primary name=action value=grant30>+30 min</button>\
-           <button class=primary name=action value=grant60>+1 hour</button>{end_break}</form>\
+           <button class=primary name=action value=grant60>+1 hour</button>\
+           <button name=action value=take15>&minus;15 min</button>{end_break}</form>\
          <form method=post action=/act class=row><input type=hidden name=user value=\"{name}\">\
            <label for=at-{name}>Allow until</label><input id=at-{name} type=time name=at required>\
            <button name=action value=allow_until>Allow</button></form>\
          <form method=post action=/act class=row><input type=hidden name=user value=\"{name}\">\
            <label>Lock</label><select name=lock_in><option value=300>in 5 min (countdown)</option><option value=0>now (1 min notice)</option></select>\
            <label>until</label><select name=lock_for><option value=rest>tomorrow's start</option><option value=30>30 min</option><option value=60>1 hour</option><option value=120>2 hours</option></select>\
-           <button class=danger name=action value=lock>Lock</button></form>{clear}</section>",
-        esc(&u.summary)
+           <button class=danger name=action value=lock>Lock</button></form>{clear}{}{}</section>",
+        esc(&u.summary),
+        activity_html(u),
+        settings_html(u),
     )
+}
+
+fn activity_html(u: &UserStatus) -> String {
+    if !u.track_activity {
+        return String::new();
+    }
+    let mut h = String::from("<h3>Activity</h3>");
+    match u.tracking {
+        Tracking::NoAgent => h.push_str(
+            "<p class='flash err'>Activity tracking isn't running: the Sundial agent isn't connected in the \
+             signed-in session. It was closed, or the session started before Sundial was installed.</p>",
+        ),
+        Tracking::NoExtension => h.push_str(
+            "<p class='flash err'>Activity tracking isn't running: the Sundial GNOME extension isn't answering. \
+             It loads at the next sign-in; if it was turned off, the agent turns it back on.</p>",
+        ),
+        _ => {}
+    }
+    if let Some(now) = &u.now_doing {
+        h.push_str(&format!(
+            "<p><span class=muted>Right now:</span> {}</p>",
+            esc(now)
+        ));
+    }
+    if u.activity_today.is_empty() {
+        h.push_str("<p class=muted>Nothing recorded today.</p>");
+    } else {
+        let max = u.activity_today.first().map(|a| a.secs).unwrap_or(1).max(1);
+        h.push_str("<ul class=acts>");
+        for a in &u.activity_today {
+            let pct = a.secs * 100 / max;
+            h.push_str(&format!(
+                "<li><div class=actrow><span>{}</span><b>{}</b></div><div class=bar><i style='width:{pct}%'></i></div>",
+                esc(&a.name),
+                fmt_duration(a.secs as i64)
+            ));
+            if !a.details.is_empty() {
+                h.push_str("<details><summary>Top titles</summary><ol>");
+                for (title, secs) in &a.details {
+                    h.push_str(&format!(
+                        "<li>{} <span class=muted>{}</span></li>",
+                        esc(title),
+                        fmt_duration(*secs as i64)
+                    ));
+                }
+                h.push_str("</ol></details>");
+            }
+            h.push_str("</li>");
+        }
+        h.push_str("</ul>");
+    }
+    if !u.activity_week.is_empty() {
+        h.push_str("<details><summary>Last 7 days</summary><table class=week>");
+        for a in &u.activity_week {
+            h.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td></tr>",
+                esc(&a.name),
+                fmt_duration(a.secs as i64)
+            ));
+        }
+        h.push_str("</table></details>");
+    }
+    h
+}
+
+/// "HH:MM" for a time input; end of day (24:00) shows as 00:00.
+fn hhmm(min: u32) -> String {
+    let m = min % 1440;
+    format!("{:02}:{:02}", m / 60, m % 60)
+}
+
+fn settings_html(u: &UserStatus) -> String {
+    let name = esc(&u.name);
+    let p = &u.policy;
+    let mut rows = String::new();
+    for (i, (key, label)) in DAY_KEYS.iter().zip(DAY_LABELS).enumerate() {
+        let w = p.days[i];
+        let (on, start, end) = match w {
+            Some(w) => ("checked", hhmm(w.start), hhmm(w.end)),
+            None => ("", "08:00".into(), "20:00".into()),
+        };
+        rows.push_str(&format!(
+            "<tr><td><label><input type=checkbox name=on_{key} {on}> {label}</label></td>\
+             <td><input type=time name=start_{key} value={start} required></td>\
+             <td><input type=time name=end_{key} value={end} required></td></tr>"
+        ));
+    }
+    let sel = |a: Action| if p.action == a { "selected" } else { "" };
+    format!(
+        "<details class=settings><summary>Hours &amp; limits</summary>\
+         <form method=post action=/settings><input type=hidden name=user value=\"{name}\">\
+         <table class=days><tr><th>Day</th><th>Start</th><th>Stop</th></tr>{rows}</table>\
+         <p class=muted>Unchecked = no access that day. A stop time of 00:00 means midnight.</p>\
+         <div class=grid>\
+           <label>Minutes on <input type=number name=session_minutes min=0 max=1440 value={}></label>\
+           <label>Break minutes <input type=number name=break_minutes min=1 max=1440 value={}></label>\
+           <label>Countdown minutes <input type=number name=warn_minutes min=1 max=60 value={}></label>\
+           <label>When time is up <select name=action><option value=logout {}>Log out</option><option value=lock {}>Lock screen</option></select></label>\
+         </div><p class=muted>Minutes on = 0 turns off the session limit (hours still apply).</p>\
+         <div class=row><button class=primary>Save</button></div></form></details>",
+        p.session_minutes,
+        p.break_minutes,
+        p.warn_minutes,
+        sel(Action::Logout),
+        sel(Action::Lock),
+    )
+}
+
+const DAY_LABELS: [&str; 7] = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+];
+
+fn parse_minutes(v: Option<&String>, end: bool) -> Option<u32> {
+    let t = NaiveTime::parse_from_str(v?.trim(), "%H:%M").ok()?;
+    let m = t.hour() * 60 + t.minute();
+    Some(if end && m == 0 { 1440 } else { m })
+}
+
+fn parse_settings(f: &HashMap<String, String>) -> Result<PolicyUpdate, String> {
+    let num = |k: &str| -> Result<u32, String> {
+        f.get(k)
+            .and_then(|v| v.trim().parse().ok())
+            .ok_or_else(|| format!("{k}: enter a number"))
+    };
+    let mut days = [None; 7];
+    for (i, key) in DAY_KEYS.iter().enumerate() {
+        if !f.contains_key(&format!("on_{key}")) {
+            continue;
+        }
+        let start = parse_minutes(f.get(&format!("start_{key}")), false)
+            .ok_or(format!("{}: bad start time", DAY_LABELS[i]))?;
+        let end = parse_minutes(f.get(&format!("end_{key}")), true)
+            .ok_or(format!("{}: bad stop time", DAY_LABELS[i]))?;
+        if end <= start {
+            return Err(format!("{}: stop must be after start", DAY_LABELS[i]));
+        }
+        days[i] = Some(Window { start, end });
+    }
+    let warn = num("warn_minutes")?;
+    if !(1..=60).contains(&warn) {
+        return Err("Countdown must be 1 to 60 minutes.".into());
+    }
+    Ok(PolicyUpdate {
+        session_minutes: num("session_minutes")?,
+        break_minutes: num("break_minutes")?.max(1),
+        warn_minutes: warn,
+        action: if f.get("action").map(String::as_str) == Some("lock") {
+            Action::Lock
+        } else {
+            Action::Logout
+        },
+        days,
+    })
+}
+
+async fn settings(
+    State(app): State<App>,
+    uri: Uri,
+    headers: HeaderMap,
+    Form(f): Form<HashMap<String, String>>,
+) -> Response {
+    if !same_origin(&headers, &uri) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(parent) = signed_in(&app, &headers) else {
+        return Redirect::to("/").into_response();
+    };
+    let user = f.get("user").cloned().unwrap_or_default();
+    let policy = match parse_settings(&f) {
+        Ok(p) => p,
+        Err(e) => return Redirect::to(&format!("/?err={}", enc(&e))).into_response(),
+    };
+    let resp = app.daemon.lock().unwrap().handle(AdminRequest::SetPolicy {
+        user: user.clone(),
+        by: parent,
+        policy,
+    });
+    let target = match (resp.ok, resp.message, resp.error) {
+        (true, Some(m), _) => format!("/?msg={}", enc(&format!("{user}: {m}"))),
+        (_, _, Some(e)) => format!("/?err={}", enc(&e)),
+        _ => "/".into(),
+    };
+    Redirect::to(&target).into_response()
 }
 
 fn dashboard(parent: &str, resp: &AdminResponse, msg: Option<&str>, err: Option<&str>) -> String {

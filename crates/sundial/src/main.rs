@@ -70,7 +70,9 @@ enum Cmd {
     Status,
     /// Give extra minutes now (on top of any time left).
     Grant { user: String, minutes: u32 },
-    /// End the current break; a fresh session starts.
+    /// Take minutes off the current session (the countdown is always left).
+    Take { user: String, minutes: u32 },
+    /// End the current break (or reset the session); a fresh session starts.
     EndBreak { user: String },
     /// Allow use until a clock time (HH:MM), regardless of rules.
     AllowUntil { user: String, time: String },
@@ -119,6 +121,7 @@ fn real_main() -> Result<()> {
         } => passwd(&name, delete, stdin),
         Cmd::Status => print_status(send(AdminRequest::Status)?),
         Cmd::Grant { user, minutes } => act(user, Override::Grant { minutes }),
+        Cmd::Take { user, minutes } => act(user, Override::TakeTime { minutes }),
         Cmd::EndBreak { user } => act(user, Override::EndBreak),
         Cmd::AllowUntil { user, time } => act(
             user,
@@ -303,6 +306,12 @@ fn print_status(resp: AdminResponse) -> Result<()> {
         }
         if let Some(d) = u.deadline {
             println!("  countdown {} left", fmt_duration(d - now.timestamp()));
+        }
+        if let Some(n) = &u.now_doing {
+            println!("  now       {n}");
+        }
+        for a in u.activity_today.iter().take(8) {
+            println!("  activity  {:<16} {}", a.name, fmt_duration(a.secs as i64));
         }
         for s in &u.sessions {
             println!(

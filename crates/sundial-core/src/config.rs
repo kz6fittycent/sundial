@@ -19,6 +19,19 @@ pub struct Config {
     pub web: WebConfig,
     #[serde(default, rename = "user")]
     pub users: Vec<UserPolicy>,
+    /// Extra activity names, checked before the built-in ones (Minecraft, YouTube, ...).
+    #[serde(default, rename = "activity")]
+    pub activities: Vec<ActivityRule>,
+}
+
+/// `[[activity]] name = "Roblox"  match = ["sober", "roblox"]`: case-insensitive
+/// substrings of the focused app's id, name or window title.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActivityRule {
+    pub name: String,
+    #[serde(rename = "match")]
+    pub patterns: Vec<String>,
 }
 
 impl Config {
@@ -103,6 +116,9 @@ pub struct UserPolicy {
     pub action: Action,
     #[serde(default)]
     pub schedule: Schedule,
+    /// Record which app or site is in front (needs the GNOME extension and the agent).
+    #[serde(default = "default_true")]
+    pub track_activity: bool,
 }
 
 fn default_session() -> u32 {
@@ -116,7 +132,7 @@ fn default_warn() -> u32 {
 }
 
 /// Allowed window within one day, in minutes after midnight. `end` may be 1440 (24:00).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Window {
     pub start: u32,
     pub end: u32,
@@ -218,9 +234,98 @@ impl TryFrom<BTreeMap<String, String>> for Schedule {
     }
 }
 
+/// New limits for one account, from the web page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PolicyUpdate {
+    pub session_minutes: u32,
+    pub break_minutes: u32,
+    pub warn_minutes: u32,
+    pub action: Action,
+    /// Monday first; None = no access that day.
+    pub days: [Option<Window>; 7],
+}
+
+impl PolicyUpdate {
+    pub fn from_policy(p: &UserPolicy) -> PolicyUpdate {
+        PolicyUpdate {
+            session_minutes: p.session_minutes,
+            break_minutes: p.break_minutes,
+            warn_minutes: p.warn_minutes,
+            action: p.action,
+            days: p.schedule.days,
+        }
+    }
+}
+
+/// Rewrite one `[[user]]` block of a config file, keeping everything else (comments,
+/// other accounts, unknown order) as it was. The result is validated before it is returned.
+pub fn edit_user_policy(text: &str, user: &str, upd: &PolicyUpdate) -> Result<String, String> {
+    use toml_edit::{DocumentMut, Item, Table, value};
+    if upd.warn_minutes > 60 || upd.session_minutes > 24 * 60 || upd.break_minutes > 24 * 60 {
+        return Err("minutes out of range".into());
+    }
+    let mut doc: DocumentMut = text.parse().map_err(|e| format!("config: {e}"))?;
+    let users = doc
+        .get_mut("user")
+        .and_then(Item::as_array_of_tables_mut)
+        .ok_or("config has no [[user]] entries")?;
+    let t = users
+        .iter_mut()
+        .find(|t| t.get("name").and_then(|v| v.as_str()) == Some(user))
+        .ok_or_else(|| format!("{user} is not in the config"))?;
+    t["session_minutes"] = value(i64::from(upd.session_minutes));
+    t["break_minutes"] = value(i64::from(upd.break_minutes));
+    t["warn_minutes"] = value(i64::from(upd.warn_minutes));
+    t["action"] = value(match upd.action {
+        Action::Logout => "logout",
+        Action::Lock => "lock",
+    });
+    let mut sched = Table::new();
+    for (i, k) in DAY_KEYS.iter().enumerate() {
+        sched[k] = value(match upd.days[i] {
+            Some(w) => w.to_string(),
+            None => "none".to_string(),
+        });
+    }
+    t["schedule"] = Item::Table(sched);
+    let out = doc.to_string();
+    Config::parse(&out)?;
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edit_keeps_comments_and_other_users() {
+        let text = "# top comment\n[web]\nlisten = \"0.0.0.0:1\"\n\n# kid one\n[[user]]\nname = \"a\"\n[user.schedule]\ndefault = \"08:00-20:00\"\n\n[[user]]\nname = \"b\"\nsession_minutes = 30\n";
+        let mut days = [Some(Window {
+            start: 9 * 60,
+            end: 21 * 60,
+        }); 7];
+        days[6] = None;
+        let upd = PolicyUpdate {
+            session_minutes: 45,
+            break_minutes: 90,
+            warn_minutes: 3,
+            action: Action::Lock,
+            days,
+        };
+        let out = edit_user_policy(text, "a", &upd).unwrap();
+        assert!(
+            out.contains("# top comment") && out.contains("# kid one"),
+            "{out}"
+        );
+        let cfg = Config::parse(&out).unwrap();
+        let a = cfg.user("a").unwrap();
+        assert_eq!(PolicyUpdate::from_policy(a), upd);
+        assert_eq!(cfg.user("b").unwrap().session_minutes, 30);
+        assert!(edit_user_policy(text, "nobody", &upd).is_err());
+        let mut bad = upd.clone();
+        bad.warn_minutes = 999;
+        assert!(edit_user_policy(text, "a", &bad).is_err());
+    }
 
     #[test]
     fn parses_example() {

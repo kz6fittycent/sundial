@@ -6,17 +6,93 @@
 use gtk::prelude::*;
 use gtk::{gio, glib};
 use std::cell::RefCell;
+use std::io::Write;
 use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream;
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use sundial_core::activity::Focus;
 use sundial_core::config::AGENT_SOCKET;
-use sundial_core::proto::AgentStatus;
+use sundial_core::proto::{AgentReport, AgentStatus};
 use sundial_core::rules::fmt_duration;
 
 const APP_ID: &str = "io.github.kz6fittycent.Sundial";
 const EARLY_WARNING: i64 = 15 * 60;
+
+// The Sundial GNOME Shell extension (packaging/gnome-extension) answers this.
+const EXT_UUID: &str = "sundial@kz6fittycent.github.io";
+const EXT_BUS: &str = "io.github.kz6fittycent.Sundial.Focus";
+const EXT_PATH: &str = "/io/github/kz6fittycent/Sundial/Focus";
+const EXT_IFACE: &str = "io.github.kz6fittycent.Sundial.Focus";
+
+/// Write side of the daemon connection, set by the reader thread.
+type Writer = Arc<Mutex<Option<UnixStream>>>;
+
+/// The focused window, from the extension. None if it doesn't answer.
+fn focus(conn: &gio::DBusConnection) -> Option<Focus> {
+    let v = conn
+        .call_sync(
+            Some(EXT_BUS),
+            EXT_PATH,
+            EXT_IFACE,
+            "GetFocus",
+            None,
+            Some(glib::VariantTy::new("(sss)").expect("valid type")),
+            gio::DBusCallFlags::NO_AUTO_START,
+            1000,
+            gio::Cancellable::NONE,
+        )
+        .ok()?;
+    let (app_id, app_name, title) = v.get::<(String, String, String)>()?;
+    Some(Focus {
+        app_id,
+        app_name,
+        title,
+    })
+}
+
+/// Keep the extension enabled for this account (it may have been turned off).
+fn ensure_extension() {
+    let Some(src) = gio::SettingsSchemaSource::default() else {
+        return;
+    };
+    if src.lookup("org.gnome.shell", true).is_none() {
+        return;
+    }
+    let st = gio::Settings::new("org.gnome.shell");
+    if st.boolean("disable-user-extensions") {
+        let _ = st.set_boolean("disable-user-extensions", false);
+    }
+    let list = |k: &str| -> Vec<String> { st.strv(k).iter().map(|s| s.to_string()).collect() };
+    let mut enabled = list("enabled-extensions");
+    if !enabled.iter().any(|e| e == EXT_UUID) {
+        enabled.push(EXT_UUID.into());
+        let v: Vec<&str> = enabled.iter().map(String::as_str).collect();
+        let _ = st.set_strv("enabled-extensions", v.as_slice());
+    }
+    let disabled = list("disabled-extensions");
+    if disabled.iter().any(|e| e == EXT_UUID) {
+        let v: Vec<&str> = disabled
+            .iter()
+            .map(String::as_str)
+            .filter(|e| *e != EXT_UUID)
+            .collect();
+        let _ = st.set_strv("disabled-extensions", v.as_slice());
+    }
+    gio::Settings::sync();
+}
+
+fn send_report(writer: &Writer, report: &AgentReport) {
+    let mut guard = writer.lock().unwrap();
+    if let Some(s) = guard.as_mut() {
+        let mut line = serde_json::to_string(report).unwrap_or_default();
+        line.push('\n');
+        if s.write_all(line.as_bytes()).is_err() {
+            *guard = None;
+        }
+    }
+}
 
 fn unix_now() -> i64 {
     SystemTime::now()
@@ -26,9 +102,10 @@ fn unix_now() -> i64 {
 }
 
 /// Background thread: keep a connection to the daemon and forward each status line.
-fn reader(tx: mpsc::Sender<AgentStatus>) {
+fn reader(tx: mpsc::Sender<AgentStatus>, writer: Writer) {
     loop {
         if let Ok(s) = UnixStream::connect(AGENT_SOCKET) {
+            *writer.lock().unwrap() = s.try_clone().ok();
             for line in BufReader::new(s).lines() {
                 let Ok(line) = line else { break };
                 if let Ok(st) = serde_json::from_str::<AgentStatus>(&line)
@@ -173,7 +250,11 @@ fn build(app: &gtk::Application) {
     window.set_child(Some(&vbox));
 
     let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || reader(tx));
+    let writer: Writer = Arc::new(Mutex::new(None));
+    {
+        let writer = writer.clone();
+        std::thread::spawn(move || reader(tx, writer));
+    }
 
     let ui = Rc::new(RefCell::new(Ui {
         app: app.clone(),
@@ -211,6 +292,28 @@ fn build(app: &gtk::Application) {
                 u.update();
                 u.show();
             }
+        });
+    }
+    // Activity: report the focused window every 5 s; re-enable the extension every minute.
+    let bus = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE).ok();
+    {
+        let ui = ui.clone();
+        let mut ticks = 0u32;
+        glib::timeout_add_local(Duration::from_secs(5), move || {
+            if !ui.borrow().status.as_ref().is_some_and(|s| s.managed) {
+                return glib::ControlFlow::Continue;
+            }
+            if ticks.is_multiple_of(12) {
+                ensure_extension();
+            }
+            ticks = ticks.wrapping_add(1);
+            let focus = bus.as_ref().and_then(focus);
+            let report = AgentReport {
+                extension: focus.is_some(),
+                focus,
+            };
+            send_report(&writer, &report);
+            glib::ControlFlow::Continue
         });
     }
     glib::timeout_add_local(Duration::from_secs(1), move || {

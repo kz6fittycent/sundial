@@ -21,6 +21,8 @@ pub struct UserState {
     /// Local date (YYYY-MM-DD) `today_active_secs` belongs to.
     pub today: String,
     pub today_active_secs: u64,
+    /// Date (YYYY-MM-DD) -> what was in front and for how long.
+    pub activity: BTreeMap<String, crate::activity::DayActivity>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

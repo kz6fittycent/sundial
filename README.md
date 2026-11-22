@@ -14,8 +14,13 @@ before the session ends. Parents can change things from a phone on the home netw
   (or locked, if you prefer). Signing in during a break or outside allowed hours is refused at the login
   screen, with the reason and the time they can come back.
 - **Parent web page** over HTTPS on the LAN, with Sundial's own parent logins. From it you can give
-  +15/+30/+60 minutes, end a break, allow use until a set time, or lock now or in 5 minutes (until a time
-  or tomorrow morning). It also shows recent activity.
+  +15/+30/+60 minutes, take 15 minutes away, end a break or reset the session, allow use until a set time,
+  or lock now or in 5 minutes (until a time or tomorrow morning). You can also change each day's start and
+  stop times and the session, break and countdown lengths.
+- **Activity**: what's in front and for how long, per day. Games like Minecraft are recognized by their
+  window, and YouTube, Netflix, Twitch, Disney+ and other sites by the browser tab. The top video and page
+  titles are kept, along with a 7-day summary. A small GNOME Shell extension reports the focused window;
+  the page warns if tracking stops (extension turned off, agent closed).
 - **CLI** for the same overrides over SSH: `sudo sundial grant kid 30`.
 
 Tested on Ubuntu 26.04 with GNOME 50 (Wayland). It relies only on systemd-logind and PAM, so other
@@ -39,6 +44,10 @@ desktops should work. The countdown window needs GTK 4.
 - Every 5 seconds the daemon asks logind for the managed accounts' sessions. Time counts while a session is
   active (in the foreground), not locked, and not idle. GNOME reports idle after its blank-screen delay,
   5 minutes by default.
+- For activity, the Sundial GNOME Shell extension answers `GetFocus()` on the session bus with the focused
+  window's app and title. The agent asks every 5 seconds and passes the answer to the daemon, which counts
+  it only while the session is in use. The agent turns the extension back on if it gets disabled. A newly
+  installed extension loads at the next sign-in.
 - The agent only displays what the daemon sends. Killing it doesn't lift any limit; the daemon falls back to
   plain desktop notifications for the countdown.
 - The login check runs only for accounts in the `sundial-managed` group (the daemon adds configured accounts
@@ -69,7 +78,8 @@ sudo sundial passwd dad
 ```
 
 `install.sh` puts the binaries in `/usr/local/bin`, then installs the systemd unit, the agent autostart entry,
-and a `pam-auth-update` profile (Debian/Ubuntu). `uninstall.sh` removes them; `PURGE=1` also removes the
+the GNOME Shell extension (`/usr/share/gnome-shell/extensions/sundial@kz6fittycent.github.io`) and a
+`pam-auth-update` profile (Debian/Ubuntu). `uninstall.sh` removes them; `PURGE=1` also removes the
 config, state and group.
 
 A snap is planned.
@@ -89,6 +99,7 @@ session_minutes = 60     # active minutes before a break; 0 = no session limit
 break_minutes = 120
 warn_minutes = 5         # countdown length
 action = "logout"        # or "lock"
+track_activity = true    # record which app/site is in front
 
 [user.schedule]          # mon..sun, or default; "none" = no access that day
 default = "08:00-20:00"
@@ -97,6 +108,18 @@ sat = "08:00-22:00"
 ```
 
 Add more `[[user]]` blocks for more accounts. Windows can't cross midnight; use `24:00` for the end of a day.
+
+Name more activities (checked before the built-in ones). Each pattern is a case-insensitive substring of the
+focused app's id, name or window title:
+
+```toml
+[[activity]]
+name = "Roblox"
+match = ["sober", "roblox"]
+```
+
+Saving from the web page's "Hours & limits" rewrites that account's block. Comments elsewhere in the file stay;
+a comment inside the replaced `[user.schedule]` table does not. The previous file is kept as `config.toml.bak`.
 
 ## Parent web page
 
@@ -113,12 +136,15 @@ If the computer runs a firewall, allow the port from your LAN, for example
 ```
 sudo sundial status                     # time left, breaks, sessions, recent events
 sudo sundial grant kid 30               # +30 min on top of what's left (beats breaks and hours)
+sudo sundial take kid 15                # 15 min less (the countdown is always left)
 sudo sundial end-break kid              # fresh session now
 sudo sundial allow-until kid 21:30
 sudo sundial lock kid                   # 5 min countdown, locked until tomorrow's start
 sudo sundial lock kid --now --until 18:00
 sudo sundial clear kid                  # drop parent overrides
 ```
+
+`status` also shows what's in front now and today's activity totals.
 
 ## Rules in detail
 
@@ -127,6 +153,10 @@ sudo sundial clear kid                  # drop parent overrides
 - A break that would end after the day's allowed hours lasts until the next morning's start.
 - If a session appears while the account is blocked (an SSH login, or a parent's "lock now"), it gets a
   1 minute notice before it is ended.
+- Activity time is focused-window time while the session is in use. A video playing in a background tab
+  while a game is in front counts as the game.
+- Activity records window titles of the managed account, kept for 14 days in `/var/lib/sundial/state.json`
+  (root only). Turn it off per account with `track_activity = false`.
 - Parent actions and enforcement are logged to the journal (`journalctl -u sundial`) and shown on the page.
 
 ## License

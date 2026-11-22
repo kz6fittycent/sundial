@@ -1,0 +1,8 @@
+{
+  "uuid": "sundial@kz6fittycent.github.io",
+  "name": "Sundial activity",
+  "description": "Tells the Sundial screen time agent which app and window are in front, so parents can see time per game or site. Read-only; it changes nothing on screen.",
+  "shell-version": ["46", "47", "48", "49", "50"],
+  "url": "https://github.com/kz6fittycent/sundial",
+  "version-name": "0.2.0"
+}

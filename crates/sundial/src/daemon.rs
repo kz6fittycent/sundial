@@ -9,11 +9,17 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
-use sundial_core::config::{ADMIN_SOCKET, AGENT_SOCKET, Action, Config, UserPolicy};
-use sundial_core::proto::{AdminRequest, AdminResponse, AgentStatus, SessionInfo, UserStatus};
+use sundial_core::activity::{self, Classified};
+use sundial_core::config::{
+    ADMIN_SOCKET, AGENT_SOCKET, Action, Config, PolicyUpdate, UserPolicy, edit_user_policy,
+};
+use sundial_core::proto::{
+    ActivityLine, AdminRequest, AdminResponse, AgentReport, AgentStatus, SessionInfo, Tracking,
+    UserStatus,
+};
 use sundial_core::rules::{self, Verdict};
 use sundial_core::state::State;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::watch;
 
@@ -23,6 +29,8 @@ pub const TICK_SECS: u64 = 5;
 pub const GRACE_SECS: i64 = 60;
 /// Deadline changes this small are jitter, not a new countdown.
 const DEADLINE_SLACK: i64 = 15;
+/// Agent reports older than this are ignored (agent hung or gone).
+const REPORT_FRESH_SECS: i64 = 20;
 
 /// Per-user enforcement memory; not persisted.
 #[derive(Default)]
@@ -47,6 +55,8 @@ pub struct Daemon {
     agents_tx: watch::Sender<HashMap<String, AgentStatus>>,
     /// Connected agents per user.
     agents: HashMap<String, usize>,
+    /// Latest agent report per user, with the time it arrived.
+    reports: HashMap<String, (i64, AgentReport)>,
 }
 
 pub type Shared = Arc<Mutex<Daemon>>;
@@ -79,6 +89,7 @@ impl Daemon {
             last_tick: None,
             agents_tx,
             agents: HashMap::new(),
+            reports: HashMap::new(),
         })
     }
 
@@ -112,6 +123,15 @@ impl Daemon {
         }
     }
 
+    /// What is in front for this user, from a fresh agent report.
+    fn focus_now(&self, user: &str, t: i64) -> Option<Classified> {
+        let (ts, rep) = self.reports.get(user)?;
+        if t - ts > REPORT_FRESH_SECS || self.agents.get(user).copied().unwrap_or(0) == 0 {
+            return None;
+        }
+        activity::classify(rep.focus.as_ref()?, &self.cfg.activities)
+    }
+
     /// One tick: count, decide, and return what needs doing outside the lock.
     fn tick(&mut self, sessions: Vec<logind::Session>) -> Vec<Effect> {
         let now = Local::now();
@@ -142,6 +162,13 @@ impl Daemon {
             let verdict = rules::evaluate(&p, us, &now);
             for e in events {
                 self.log(&p.name, e);
+            }
+            if p.track_activity
+                && in_use
+                && let Some(c) = self.focus_now(&p.name, t)
+            {
+                let us = self.state.users.entry(p.name.clone()).or_default();
+                activity::record(us, &now.date_naive().to_string(), &c, delta);
             }
 
             let rt = self.runtime.entry(p.name.clone()).or_default();
@@ -270,12 +297,96 @@ impl Daemon {
                     0
                 },
                 schedule_today: schedule_today(p, &now),
-                sessions,
                 deadline,
+                policy: PolicyUpdate::from_policy(p),
+                track_activity: p.track_activity,
+                tracking: self.tracking(p, !sessions.is_empty(), t),
+                now_doing: self.now_doing(p, &sessions, t),
+                activity_today: activity_lines(&us, &now, 1, 6),
+                activity_week: activity_lines(&us, &now, 7, 0),
+                sessions,
             });
         }
         self.statuses = statuses;
         self.agents_tx.send_replace(agent);
+    }
+
+    fn tracking(&self, p: &UserPolicy, signed_in: bool, t: i64) -> Tracking {
+        if !p.track_activity {
+            return Tracking::Off;
+        }
+        if !signed_in {
+            return Tracking::NotSignedIn;
+        }
+        if self.agents.get(&p.name).copied().unwrap_or(0) == 0 {
+            return Tracking::NoAgent;
+        }
+        match self.reports.get(&p.name) {
+            Some((ts, rep)) if t - ts <= REPORT_FRESH_SECS && rep.extension => Tracking::Ok,
+            _ => Tracking::NoExtension,
+        }
+    }
+
+    fn now_doing(&self, p: &UserPolicy, sessions: &[SessionInfo], t: i64) -> Option<String> {
+        if !p.track_activity || sessions.is_empty() {
+            return None;
+        }
+        let front = sessions.iter().find(|s| s.active);
+        match front {
+            None => Some("Signed in, in the background".into()),
+            Some(s) if s.locked => Some("Screen locked".into()),
+            Some(s) if s.idle => Some("Idle".into()),
+            Some(_) => self.focus_now(&p.name, t).map(|c| match c.detail {
+                Some(d) => format!("{}: {d}", c.name),
+                None => c.name,
+            }),
+        }
+    }
+
+    /// Replace one account's limits and hours in the config file, then reload it.
+    fn set_policy(
+        &mut self,
+        user: &str,
+        by: &str,
+        policy: &PolicyUpdate,
+    ) -> Result<String, String> {
+        let text = std::fs::read_to_string(&self.cfg_path)
+            .map_err(|e| format!("reading {}: {e}", self.cfg_path.display()))?;
+        let out = edit_user_policy(&text, user, policy)?;
+        if out == text {
+            return Ok("no changes".into());
+        }
+        let bak = self.cfg_path.with_extension("toml.bak");
+        let tmp = self.cfg_path.with_extension("toml.tmp");
+        std::fs::write(&bak, &text).map_err(|e| format!("backup: {e}"))?;
+        std::fs::write(&tmp, &out).map_err(|e| format!("writing config: {e}"))?;
+        std::fs::rename(&tmp, &self.cfg_path).map_err(|e| format!("writing config: {e}"))?;
+        self.cfg = Config::parse(&out)?;
+        self.cfg_mtime = mtime(&self.cfg_path);
+        let days: Vec<String> = sundial_core::config::DAY_KEYS
+            .iter()
+            .zip(policy.days)
+            .map(|(d, w)| {
+                format!(
+                    "{d} {}",
+                    w.map(|w| w.to_string()).unwrap_or_else(|| "none".into())
+                )
+            })
+            .collect();
+        let text = format!(
+            "limits set: {} min on, {} min break, {} min warning, {}; hours {}",
+            policy.session_minutes,
+            policy.break_minutes,
+            policy.warn_minutes,
+            if policy.action == Action::Lock {
+                "lock"
+            } else {
+                "logout"
+            },
+            days.join(", ")
+        );
+        self.log(user, format!("{text} (by {by})"));
+        Ok(text)
     }
 
     pub fn handle(&mut self, req: AdminRequest) -> AdminResponse {
@@ -285,6 +396,16 @@ impl Daemon {
             now: now.timestamp(),
             ..Default::default()
         };
+        if let AdminRequest::SetPolicy { user, by, policy } = &req {
+            match self.set_policy(user, by, policy) {
+                Ok(m) => resp.message = Some(m),
+                Err(e) => {
+                    resp.ok = false;
+                    resp.error = Some(e);
+                }
+            }
+            self.refresh_status();
+        }
         if let AdminRequest::Act { user, by, action } = req {
             match self.cfg.user(&user).cloned() {
                 None => {
@@ -311,6 +432,49 @@ impl Daemon {
         resp.log = self.state.log.iter().rev().take(50).cloned().collect();
         resp
     }
+}
+
+/// Activity totals for the last `days` days (1 = today), largest first, with up to
+/// `details` top titles each.
+fn activity_lines(
+    us: &sundial_core::state::UserState,
+    now: &chrono::DateTime<Local>,
+    days: i64,
+    details: usize,
+) -> Vec<ActivityLine> {
+    let first = (now.date_naive() - chrono::Duration::days(days - 1)).to_string();
+    let mut totals: HashMap<String, u64> = HashMap::new();
+    let mut titles: HashMap<String, HashMap<String, u64>> = HashMap::new();
+    for (_, day) in us.activity.range(first..) {
+        for (name, secs) in &day.totals {
+            *totals.entry(name.clone()).or_default() += secs;
+        }
+        for (name, ts) in &day.details {
+            let m = titles.entry(name.clone()).or_default();
+            for (title, secs) in ts {
+                *m.entry(title.clone()).or_default() += secs;
+            }
+        }
+    }
+    let mut lines: Vec<ActivityLine> = totals
+        .into_iter()
+        .map(|(name, secs)| {
+            let mut d: Vec<(String, u64)> = titles
+                .remove(&name)
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            d.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            d.truncate(details);
+            ActivityLine {
+                name,
+                secs,
+                details: d,
+            }
+        })
+        .collect();
+    lines.sort_by(|a, b| b.secs.cmp(&a.secs).then(a.name.cmp(&b.name)));
+    lines
 }
 
 /// "08:00-20:00" or "no access" for today.
@@ -443,7 +607,7 @@ async fn agent_server(shared: Shared) {
     }
 }
 
-async fn serve_agent(shared: Shared, mut stream: UnixStream, user: String) {
+async fn serve_agent(shared: Shared, stream: UnixStream, user: String) {
     let mut rx = {
         let mut d = shared.lock().unwrap();
         *d.agents.entry(user.clone()).or_default() += 1;
@@ -457,16 +621,38 @@ async fn serve_agent(shared: Shared, mut stream: UnixStream, user: String) {
         message: String::new(),
         action: String::new(),
     };
+    let (r, mut w) = stream.into_split();
+    // Reports are small; a line this long is not from a real agent.
+    let mut lines = BufReader::new(r.take(1 << 20)).lines();
+    let mut send = true;
     loop {
-        let status = rx
-            .borrow_and_update()
-            .get(&user)
-            .cloned()
-            .unwrap_or_else(|| unmanaged.clone());
-        let mut line = serde_json::to_string(&status).unwrap_or_default();
-        line.push('\n');
-        if stream.write_all(line.as_bytes()).await.is_err() || rx.changed().await.is_err() {
-            break;
+        if send {
+            let status = rx
+                .borrow_and_update()
+                .get(&user)
+                .cloned()
+                .unwrap_or_else(|| unmanaged.clone());
+            let mut line = serde_json::to_string(&status).unwrap_or_default();
+            line.push('\n');
+            if w.write_all(line.as_bytes()).await.is_err() {
+                break;
+            }
+        }
+        tokio::select! {
+            changed = rx.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                send = true;
+            }
+            line = lines.next_line() => {
+                let Ok(Some(line)) = line else { break };
+                if let Ok(rep) = serde_json::from_str::<AgentReport>(&line) {
+                    let t = Local::now().timestamp();
+                    shared.lock().unwrap().reports.insert(user.clone(), (t, rep));
+                }
+                send = false;
+            }
         }
     }
     let mut d = shared.lock().unwrap();

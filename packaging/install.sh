@@ -13,6 +13,12 @@ install -m 0755 "$BIN/sundial" "$BIN/sundial-agent" /usr/local/bin/
 install -m 0644 "$HERE/sundial.service" /etc/systemd/system/sundial.service
 install -m 0644 "$HERE/sundial-agent.desktop" /etc/xdg/autostart/sundial-agent.desktop
 install -m 0644 "$HERE/io.github.kz6fittycent.Sundial.desktop" /usr/share/applications/
+# GNOME Shell extension for activity tracking (the agent enables it per account; it
+# loads at the next sign-in).
+EXT=sundial@kz6fittycent.github.io
+install -d -m 0755 "/usr/share/gnome-shell/extensions/$EXT"
+install -m 0644 "$HERE/gnome-extension/$EXT/metadata.json" "$HERE/gnome-extension/$EXT/extension.js" \
+	"/usr/share/gnome-shell/extensions/$EXT/"
 install -d -m 0755 /etc/sundial
 if [ ! -e /etc/sundial/config.toml ]; then
 	install -m 0644 "$HERE/config.example.toml" /etc/sundial/config.toml

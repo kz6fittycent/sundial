@@ -1,5 +1,7 @@
 //! Messages on the daemon's Unix sockets (one JSON object per line).
 
+use crate::activity::Focus;
+use crate::config::PolicyUpdate;
 use crate::rules::{Override, Verdict};
 use crate::state::{Block, LogEntry};
 use serde::{Deserialize, Serialize};
@@ -20,6 +22,15 @@ pub struct AgentStatus {
     pub action: String,
 }
 
+/// Agent -> daemon, every few seconds.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct AgentReport {
+    /// The focused window, if the GNOME extension answered.
+    pub focus: Option<Focus>,
+    /// False when the extension isn't reachable (disabled, or not loaded yet).
+    pub extension: bool,
+}
+
 /// CLI/web -> daemon on `/run/sundial/admin.sock` (root only).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
@@ -29,6 +40,11 @@ pub enum AdminRequest {
         user: String,
         by: String,
         action: Override,
+    },
+    SetPolicy {
+        user: String,
+        by: String,
+        policy: PolicyUpdate,
     },
 }
 
@@ -57,6 +73,38 @@ pub struct UserStatus {
     pub schedule_today: String,
     pub sessions: Vec<SessionInfo>,
     pub deadline: Option<i64>,
+    /// Current limits, for the settings form.
+    pub policy: PolicyUpdate,
+    pub track_activity: bool,
+    pub tracking: Tracking,
+    /// "Minecraft: Minecraft* 1.21.4 - Singleplayer"
+    pub now_doing: Option<String>,
+    pub activity_today: Vec<ActivityLine>,
+    /// Last 7 days including today.
+    pub activity_week: Vec<ActivityLine>,
+}
+
+/// Whether activity reports are arriving for a signed-in account.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Tracking {
+    /// Turned off in the config.
+    Off,
+    /// Not signed in, so nothing to report.
+    NotSignedIn,
+    Ok,
+    /// Signed in but no agent connected (killed, or not autostarted).
+    NoAgent,
+    /// Agent runs but the GNOME extension doesn't answer (disabled, or needs a re-login).
+    NoExtension,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActivityLine {
+    pub name: String,
+    pub secs: u64,
+    /// Top titles (video, page, game window) with seconds, largest first.
+    pub details: Vec<(String, u64)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

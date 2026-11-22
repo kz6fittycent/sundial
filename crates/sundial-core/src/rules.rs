@@ -56,8 +56,11 @@ pub enum Override {
     /// Add minutes on top of whatever time is left (or start from now if blocked).
     /// Overrides breaks and allowed hours until it runs out.
     Grant { minutes: u32 },
-    /// End the current break and start a fresh session.
+    /// End the current break (if any) and start a fresh session.
     EndBreak,
+    /// Take minutes off the current session (and off a parent's extra time). Always
+    /// leaves the countdown's worth, so the kid still gets the warning.
+    TakeTime { minutes: u32 },
     /// Allow use until this instant regardless of rules.
     AllowUntil { at: i64 },
     /// Lock after `in_secs` (the countdown) until `until`; None = the start of the next day's window.
@@ -280,7 +283,25 @@ where
         Override::EndBreak => {
             s.break_until = None;
             s.used_secs = 0;
-            "ended the break; fresh session".into()
+            "fresh session started".into()
+        }
+        Override::TakeTime { minutes } => {
+            let take = u64::from(minutes) * 60;
+            let warn = i64::from(p.warn_minutes) * 60;
+            if let Some(a) = s.allow_until.filter(|&a| a > t) {
+                s.allow_until = Some((a - take as i64).max(t + warn));
+            }
+            if p.session_minutes > 0 {
+                let limit = u64::from(p.session_minutes) * 60;
+                let ceiling = limit.saturating_sub(warn as u64).max(s.used_secs);
+                s.used_secs = (s.used_secs + take).min(ceiling);
+            }
+            match evaluate(p, s, now) {
+                Verdict::Allowed { until: Some(u), .. } => {
+                    format!("took {minutes} min; {} left", fmt_duration(u - t))
+                }
+                _ => format!("took {minutes} min"),
+            }
         }
         Override::AllowUntil { at } => {
             s.allow_until = Some(at);
@@ -313,7 +334,7 @@ where
     }
 }
 
-/// "3:45 PM", "tomorrow 8:00 AM" or "Mon 8:00 AM", relative to `now`.
+/// "3:45 PM", "tomorrow at 8:00 AM" or "Mon at 8:00 AM", relative to `now`.
 pub fn fmt_when<Tz: TimeZone>(ts: i64, now: &DateTime<Tz>) -> String
 where
     Tz::Offset: Display,
@@ -326,8 +347,8 @@ where
     let days = (dt.date_naive() - now.date_naive()).num_days();
     match days {
         0 => clock,
-        1 => format!("tomorrow {clock}"),
-        _ => format!("{} {clock}", dt.format("%a")),
+        1 => format!("tomorrow at {clock}"),
+        _ => format!("{} at {clock}", dt.format("%a")),
     }
 }
 
@@ -375,9 +396,15 @@ where
             let when = until
                 .map(|u| fmt_when(u, now))
                 .unwrap_or_else(|| "later".into());
+            // "Back at 3:45 PM" / "Back tomorrow at 8:00 AM" / "Back later".
+            let back = if when.starts_with(|c: char| c.is_ascii_digit()) {
+                format!("Back at {when}")
+            } else {
+                format!("Back {when}")
+            };
             match reason {
-                Reason::Break => format!("Break time. Back at {when}."),
-                Reason::OutsideHours => format!("Computer time is over. Back at {when}."),
+                Reason::Break => format!("Break time. {back}."),
+                Reason::OutsideHours => format!("Computer time is over. {back}."),
                 Reason::ParentLock => format!("A parent locked the computer until {when}."),
             }
         }
@@ -633,6 +660,30 @@ mod tests {
     }
 
     #[test]
+    fn take_time_keeps_the_countdown() {
+        let p = policy();
+        let mut s = UserState::default();
+        let now = run(&p, &mut s, at(23, 8, 0), 1800, true); // 30 min left
+        apply(&p, &mut s, &now, Override::TakeTime { minutes: 15 });
+        assert_eq!(
+            evaluate(&p, &s, &now),
+            Verdict::Allowed {
+                until: Some(now.timestamp() + 900),
+                limit: Some(Limit::Session)
+            }
+        );
+        apply(&p, &mut s, &now, Override::TakeTime { minutes: 60 });
+        assert_eq!(
+            evaluate(&p, &s, &now),
+            Verdict::Allowed {
+                until: Some(now.timestamp() + 300),
+                limit: Some(Limit::Session)
+            },
+            "5 min countdown left"
+        );
+    }
+
+    #[test]
     fn no_limits_configured() {
         let p = Config::parse("[[user]]\nname='a'\nsession_minutes=0")
             .unwrap()
@@ -661,8 +712,21 @@ mod tests {
     fn formatting() {
         let now = at(23, 10, 0);
         assert_eq!(fmt_when(ts(23, 15, 45), &now), "3:45 PM");
-        assert_eq!(fmt_when(ts(24, 8, 0), &now), "tomorrow 8:00 AM");
-        assert_eq!(fmt_when(ts(26, 8, 0), &now), "Thu 8:00 AM");
+        assert_eq!(fmt_when(ts(24, 8, 0), &now), "tomorrow at 8:00 AM");
+        assert_eq!(fmt_when(ts(26, 8, 0), &now), "Thu at 8:00 AM");
+        let v = Verdict::Blocked {
+            reason: Reason::Break,
+            until: Some(ts(23, 15, 45)),
+        };
+        assert_eq!(describe(&v, &now), "Break time. Back at 3:45 PM.");
+        let v = Verdict::Blocked {
+            reason: Reason::OutsideHours,
+            until: Some(ts(24, 8, 0)),
+        };
+        assert_eq!(
+            describe(&v, &now),
+            "Computer time is over. Back tomorrow at 8:00 AM."
+        );
         assert_eq!(fmt_duration(3900), "1 h 5 min");
         assert_eq!(fmt_duration(61), "2 min");
         assert_eq!(fmt_duration(30), "30 s");
