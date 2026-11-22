@@ -19,8 +19,8 @@ before the session ends. Parents can change things from a phone on the home netw
   stop times and the session, break and countdown lengths.
 - **Activity**: what's in front and for how long, per day. Games like Minecraft are recognized by their
   window, and YouTube, Netflix, Twitch, Disney+ and other sites by the browser tab. The top video and page
-  titles are kept, along with a 7-day summary. A small GNOME Shell extension reports the focused window;
-  the page warns if tracking stops (extension turned off, agent closed).
+  titles are kept, along with a 7-day summary. The agent reads the focused window on GNOME, Plasma,
+  Cinnamon, MATE and Xfce; the page warns if tracking stops (extension turned off, agent closed).
 - **CLI** for the same overrides over SSH: `sudo sundial grant kid 30`.
 
 Limits, logout and the login check rely only on systemd-logind and PAM, so they work on any desktop.
@@ -54,10 +54,11 @@ isn't mistaken for walking away. The countdown window needs GTK 4.
 - Every 5 seconds the daemon asks logind for the managed accounts' sessions. Time counts while a session is
   active (in the foreground), not locked, and not idle. GNOME reports idle after its blank-screen delay,
   5 minutes by default.
-- For activity, the Sundial GNOME Shell extension answers `GetFocus()` on the session bus with the focused
-  window's app and title. The agent asks every 5 seconds and passes the answer to the daemon, which counts
-  it only while the session is in use. The agent turns the extension back on if it gets disabled. A newly
-  installed extension loads at the next sign-in.
+- For activity, the agent finds the focused window's app and title every 5 seconds (see the table above)
+  and passes it to the daemon, which counts it only while the session is in use. On GNOME the Sundial Shell
+  extension answers `GetFocus()` on the session bus; the agent turns it back on if it gets disabled, and a
+  newly installed extension loads at the next sign-in. On Plasma the agent loads a small KWin script that
+  calls it back on every window change.
 - The agent only displays what the daemon sends. Killing it doesn't lift any limit; the daemon falls back to
   plain desktop notifications for the countdown.
 - The login check runs only for accounts in the `sundial-managed` group (the daemon adds configured accounts
