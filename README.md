@@ -127,7 +127,7 @@ cargo build --release
 Install on the child's computer as root:
 
 ```sh
-mkdir dist && cp target/release/sundial target/release/sundial-agent packaging/* dist/
+mkdir dist && cp -r target/release/sundial target/release/sundial-agent packaging/* dist/
 sudo dist/install.sh
 sudoedit /etc/sundial/config.toml
 sudo systemctl restart sundial
