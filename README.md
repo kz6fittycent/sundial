@@ -25,6 +25,22 @@ before the session ends. Parents can change things from a phone on the home netw
   Cinnamon, MATE and Xfce; the page warns if tracking stops (extension turned off, agent closed).
 - **CLI** for the same overrides over SSH: `sudo sundial grant kid 30`.
 
+## Screenshots
+
+The accounts and activity shown are made up.
+
+| Parent page | On a phone, dark mode |
+|---|---|
+| <img src="docs/images/dashboard.png" width="460" alt="Parent page: time left, usage chart, override buttons and today's activity"> | <img src="docs/images/phone-dark.png" width="260" alt="The parent page on a phone in dark mode"> |
+
+What the child sees before time runs out:
+
+<img src="docs/images/countdown.png" width="422" alt="Countdown window: 4:15 left, save your game or work now">
+
+More in the [wiki](https://github.com/kz6fittycent/sundial/wiki).
+
+## Desktops
+
 Limits, logout and the login check rely only on systemd-logind and PAM, so they work on any desktop.
 The agent (countdown, idle and activity) knows these desktops:
 
