@@ -60,7 +60,7 @@ parts:
     rust-channel: stable
     rust-path: [crates/sundial, crates/sundial-agent]
     build-attributes: [enable-patchelf]
-    build-packages: [libgtk-4-dev, pkg-config]
+    build-packages: [libgtk-4-dev, pkg-config, musl-tools]
     stage-packages:
       - libgtk-4-1
       - libgdk-pixbuf-2.0-0
@@ -68,9 +68,15 @@ parts:
       - dconf-gsettings-backend
     override-build: |
       craftctl default
-      # Refresh the image loader list for the paths the snap is mounted at.
       LOADERS=usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gdk-pixbuf-2.0/2.10.0
       mkdir -p "$CRAFT_PART_INSTALL/$LOADERS"
+      # A static copy for the PAM login check. The hooks install it on the host
+      # (/usr/local/sbin), so sign-in never depends on the snap's libraries or mount,
+      # and SELinux lets the display manager run it (snap files are snappy_snap_t).
+      MUSL="$(uname -m)-unknown-linux-musl"
+      rustup target add "$MUSL"
+      cargo build --release --locked --target "$MUSL" -p sundial
+      install -m 0755 "target/$MUSL/release/sundial" "$CRAFT_PART_INSTALL/bin/sundial-static"
     override-prime: |
       craftctl default
       LOADERS=usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gdk-pixbuf-2.0/2.10.0

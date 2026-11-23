@@ -82,12 +82,22 @@ sudo sundial passwd mom                # parent login for the web page
 sudo sundial passwd dad
 ```
 
-Installing adds the login check (`pam-auth-update` profile, Debian/Ubuntu family), the agent autostart entry
-and the GNOME Shell extension; removing the snap takes them out again. `/etc/sundial`, `/var/lib/sundial` and
-the `sundial-managed` group are kept, so a reinstall keeps parent logins and history. On distros without
-`pam-auth-update` (Fedora, openSUSE, Arch) everything works except the login screen refusal: a sign-in during
-a break or outside hours gets a 1 minute notice and is then ended. The daemon runs as the `sundial.daemon`
-service (`sudo snap logs sundial`).
+Installing adds the login check, the agent autostart entry and the GNOME Shell extension; removing the snap
+takes them out again. `/etc/sundial`, `/var/lib/sundial` and the `sundial-managed` group are kept, so a
+reinstall keeps parent logins and history. The daemon runs as the `sundial.daemon` service
+(`sudo snap logs sundial`).
+
+The login check is a static copy of `sundial` at `/usr/local/sbin/sundial-check-login`, so signing in never
+depends on the snap being mounted, and SELinux lets the display manager run it. Where it hooks in:
+
+- **Debian, Ubuntu and derivatives**: a `pam-auth-update` profile, which covers every kind of login.
+- **Everything else** (Fedora, openSUSE, Arch, ...): two lines between `# sundial begin` / `# sundial end`
+  in each display manager's PAM file (`gdm-password`, `gdm-autologin`, `sddm`, `lightdm`, ...). Where the
+  file only exists in `/usr/lib/pam.d` (Fedora 45), a copy with the lines goes in `/etc/pam.d` and is deleted
+  on removal; snap updates recopy it, picking up the distro's changes. Console and SSH logins aren't
+  refused there; the daemon ends them after a 1 minute notice.
+
+Tested on Ubuntu 26.04 and Fedora 45 (SELinux labels applied, no denials).
 
 ### From source
 
