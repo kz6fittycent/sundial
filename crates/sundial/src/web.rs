@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use sundial_core::config::DEFAULT_ADMINS_PATH;
 use sundial_core::config::{Action, DAY_KEYS, PolicyUpdate, Window};
-use sundial_core::proto::{AdminRequest, AdminResponse, Tracking, UserStatus};
+use sundial_core::proto::{AdminRequest, AdminResponse, Tracking, UsageBar, UserStatus};
 use sundial_core::rules::{Override, Reason, Verdict, fmt_duration, fmt_when};
 
 const COOKIE: &str = "sundial_session";
@@ -336,12 +336,26 @@ table{border-collapse:collapse;font-size:14px}td,th{padding:4px 10px 4px 0;text-
 .days input[type=time]{padding:6px 8px}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:10px}.grid label{display:flex;flex-direction:column;gap:4px}
 .grid input,.grid select{width:100%}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px 20px;flex-wrap:wrap}
+.usage{flex:0 1 300px;min-width:0;width:300px;max-width:100%;position:relative}
+.usage>input{position:absolute;opacity:0;pointer-events:none}
+.usage>label{display:inline-block;font-size:13px;font-weight:600;padding:2px 12px;border:1px solid var(--line);color:var(--muted);cursor:pointer}
+.usage>label[for^=ud]{border-radius:99px 0 0 99px}.usage>label[for^=uw]{border-radius:0 99px 99px 0;margin-left:-1px}
+.usage>input:checked+label{background:var(--accent);border-color:var(--accent);color:#fff}
+.usage>input:focus-visible+label{outline:2px solid var(--accent);outline-offset:2px}
+.usage .cw,.usage .tw:checked~.cd{display:none}.usage .tw:checked~.cw{display:block}
+.usage .note{margin:6px 0 2px;font-size:13px;color:var(--muted)}
+.usage svg{display:block;width:100%;height:auto}
+.usage .axis{font-size:10px;fill:var(--muted)}.usage .grid{stroke:var(--line);stroke-dasharray:3 3}.usage .base{stroke:var(--line)}
+.usage .past{fill:var(--accent);opacity:.5}.usage .cur{fill:var(--accent)}.usage .hit{fill:transparent}
+.usage g:hover .past{opacity:.8}
 "#;
 
 fn shell(title: &str, body: &str, refresh: bool) -> String {
     let script = if refresh {
         // Reload every 30 s unless the parent is typing or picking something.
-        "<script>setInterval(()=>{const a=document.activeElement;if(!a||a===document.body)location.reload()},30000)</script>"
+        "<script>try{for(const i of document.querySelectorAll('.usage input')){if(sessionStorage.getItem(i.name)===i.id)i.checked=true;i.addEventListener('change',()=>sessionStorage.setItem(i.name,i.id))}}catch(e){}\
+         setInterval(()=>{const a=document.activeElement;if(!a||a===document.body||a.matches('.usage input'))location.reload()},30000)</script>"
     } else {
         ""
     };
@@ -479,7 +493,7 @@ fn user_card(u: &UserStatus, now: &chrono::DateTime<Local>) -> String {
         String::new()
     };
     format!(
-        "<section class=card><h2>{name} <span class='pill {class}'>{label}</span></h2>\
+        "<section class=card><div class=top><h2>{name} <span class='pill {class}'>{label}</span></h2>{}</div>\
          <p class=big>{}</p>{bar}<dl class=meta>{meta}</dl>\
          <form method=post action=/act class=row><input type=hidden name=user value=\"{name}\">\
            <button class=primary name=action value=grant15>+15 min</button>\
@@ -493,6 +507,7 @@ fn user_card(u: &UserStatus, now: &chrono::DateTime<Local>) -> String {
            <label>Lock</label><select name=lock_in><option value=300>in 5 min (countdown)</option><option value=0>now (1 min notice)</option></select>\
            <label>until</label><select name=lock_for><option value=rest>tomorrow's start</option><option value=30>30 min</option><option value=60>1 hour</option><option value=120>2 hours</option></select>\
            <button class=danger name=action value=lock>Lock</button></form>{clear}{}{}</section>",
+        usage_html(u),
         esc(&u.summary),
         activity_html(u),
         settings_html(u),
@@ -562,6 +577,134 @@ fn activity_html(u: &UserStatus) -> String {
         h.push_str("</table></details>");
     }
     h
+}
+
+/// Usage report beside the name: active time per day (14 days) or per week (8 weeks),
+/// switched with CSS-only tabs.
+fn usage_html(u: &UserStatus) -> String {
+    if u.usage_days.is_empty() {
+        return String::new();
+    }
+    let id: String = u
+        .name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    let parse = |d: &str| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok();
+    let day_bars: Vec<(String, String, u64)> = u
+        .usage_days
+        .iter()
+        .map(|b| {
+            let d = parse(&b.date);
+            (
+                d.map(|d| d.format("%a").to_string()[..1].to_string())
+                    .unwrap_or_default(),
+                d.map(|d| d.format("%a %b %-d").to_string())
+                    .unwrap_or_default(),
+                b.secs,
+            )
+        })
+        .collect();
+    let week_bars: Vec<(String, String, u64)> = u
+        .usage_weeks
+        .iter()
+        .map(|b| {
+            let d = parse(&b.date);
+            (
+                d.map(|d| d.format("%-m/%-d").to_string())
+                    .unwrap_or_default(),
+                d.map(|d| format!("Week of {}", d.format("%b %-d")))
+                    .unwrap_or_default(),
+                b.secs,
+            )
+        })
+        .collect();
+    let today = u.usage_days.last().map_or(0, |b| b.secs);
+    let week = u.usage_weeks.last().map_or(0, |b| b.secs);
+    let used = |secs: u64| {
+        if secs == 0 {
+            "none yet".to_string()
+        } else {
+            fmt_duration(secs as i64)
+        }
+    };
+    let day_note = format!("Today {}{}", used(today), avg_note(&u.usage_days, "day"));
+    let week_note = format!(
+        "This week {}{}",
+        used(week),
+        avg_note(&u.usage_weeks, "week")
+    );
+    format!(
+        "<div class=usage role=group aria-label='Computer time'>\
+         <input type=radio name=u-{id} id=ud-{id} class=td checked><label for=ud-{id}>Day</label>\
+         <input type=radio name=u-{id} id=uw-{id} class=tw><label for=uw-{id}>Week</label>\
+         <div class=cd><p class=note>{}</p>{}</div><div class=cw><p class=note>{}</p>{}</div></div>",
+        esc(&day_note),
+        bar_svg(&day_bars, "Active time per day, last 14 days"),
+        esc(&week_note),
+        bar_svg(&week_bars, "Active time per week, last 8 weeks"),
+    )
+}
+
+/// " · avg 52 min/day", counted from the first bar with any use, excluding the
+/// current (unfinished) one.
+fn avg_note(bars: &[UsageBar], unit: &str) -> String {
+    let done = &bars[..bars.len().saturating_sub(1)];
+    let Some(first) = done.iter().position(|b| b.secs > 0) else {
+        return String::new();
+    };
+    let span = &done[first..];
+    let avg = span.iter().map(|b| b.secs).sum::<u64>() / span.len() as u64;
+    format!(" · avg {}/{unit}", fmt_duration(avg as i64))
+}
+
+/// Small bar chart: (axis label, tooltip, seconds); the last bar is the current one.
+fn bar_svg(bars: &[(String, String, u64)], title: &str) -> String {
+    const W: f64 = 300.0;
+    const TOP: f64 = 14.0;
+    const BASE: f64 = 86.0;
+    let max = bars.iter().map(|b| b.2).max().unwrap_or(0);
+    let hours = max.div_ceil(3600).max(1);
+    let scale = (hours * 3600) as f64;
+    let slot = W / bars.len().max(1) as f64;
+    let bw = (slot * 0.64).min(26.0);
+    // Every attribute is quoted: in HTML an unquoted value before "/>" takes the slash.
+    let mut out = format!(
+        "<svg viewBox=\"0 0 {W} 104\" role=\"img\" aria-label=\"{t}\"><title>{t}</title>\
+         <line class=\"grid\" x1=\"0\" x2=\"{W}\" y1=\"{TOP}\" y2=\"{TOP}\"></line>\
+         <text class=\"axis\" x=\"{W}\" y=\"{y}\" text-anchor=\"end\">{hours} h</text>\
+         <line class=\"base\" x1=\"0\" x2=\"{W}\" y1=\"{BASE}\" y2=\"{BASE}\"></line>",
+        t = esc(title),
+        y = TOP - 4.0,
+    );
+    for (i, (label, tip, secs)) in bars.iter().enumerate() {
+        let h = if *secs > 0 {
+            ((BASE - TOP) * *secs as f64 / scale).max(1.5)
+        } else {
+            0.0
+        };
+        let left = slot * i as f64;
+        let x = left + (slot - bw) / 2.0;
+        let cls = if i + 1 == bars.len() { "cur" } else { "past" };
+        let shown = if *secs == 0 {
+            "no use".to_string()
+        } else {
+            fmt_duration(*secs as i64)
+        };
+        out.push_str(&format!(
+            "<g><title>{}: {shown}</title>\
+             <rect class=\"hit\" x=\"{left:.1}\" y=\"{TOP}\" width=\"{slot:.1}\" height=\"{:.1}\"></rect>\
+             <rect class=\"{cls}\" x=\"{x:.1}\" y=\"{:.1}\" width=\"{bw:.1}\" height=\"{h:.1}\" rx=\"2\"></rect>\
+             <text class=\"axis\" x=\"{:.1}\" y=\"100\" text-anchor=\"middle\">{}</text></g>",
+            esc(tip),
+            BASE - TOP,
+            BASE - h,
+            x + bw / 2.0,
+            esc(label),
+        ));
+    }
+    out.push_str("</svg>");
+    out
 }
 
 /// "HH:MM" for a time input; end of day (24:00) shows as 00:00.

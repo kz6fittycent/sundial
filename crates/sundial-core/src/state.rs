@@ -21,6 +21,8 @@ pub struct UserState {
     /// Local date (YYYY-MM-DD) `today_active_secs` belongs to.
     pub today: String,
     pub today_active_secs: u64,
+    /// Date (YYYY-MM-DD) -> active seconds that day, for the usage chart.
+    pub daily: BTreeMap<String, u64>,
     /// Date (YYYY-MM-DD) -> what was in front and for how long.
     pub activity: BTreeMap<String, crate::activity::DayActivity>,
 }
@@ -39,6 +41,8 @@ pub struct LogEntry {
 }
 
 pub const LOG_KEEP: usize = 200;
+/// Days of daily totals kept (enough for 8 full weeks plus this one).
+pub const DAILY_KEEP: usize = 70;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]

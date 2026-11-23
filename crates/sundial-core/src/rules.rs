@@ -224,6 +224,11 @@ where
         if evaluate(p, s, now).is_allowed() {
             s.used_secs += active_secs;
             s.today_active_secs += active_secs;
+            *s.daily.entry(s.today.clone()).or_default() += active_secs;
+            while s.daily.len() > crate::state::DAILY_KEEP {
+                let oldest = s.daily.keys().next().cloned().expect("non-empty");
+                s.daily.remove(&oldest);
+            }
         }
         s.last_active = Some(t);
     } else if p.session_minutes > 0

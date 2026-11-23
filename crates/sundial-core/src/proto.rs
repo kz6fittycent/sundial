@@ -95,6 +95,20 @@ pub struct UserStatus {
     pub activity_today: Vec<ActivityLine>,
     /// Last 7 days including today.
     pub activity_week: Vec<ActivityLine>,
+    /// Active time per day, oldest first, ending today (14 days).
+    #[serde(default)]
+    pub usage_days: Vec<UsageBar>,
+    /// Active time per week (Sunday to Saturday), oldest first, ending this week (8 weeks).
+    #[serde(default)]
+    pub usage_weeks: Vec<UsageBar>,
+}
+
+/// One bar of the usage chart.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UsageBar {
+    /// First (or only) day, YYYY-MM-DD.
+    pub date: String,
+    pub secs: u64,
 }
 
 /// Whether activity reports are arriving for a signed-in account.

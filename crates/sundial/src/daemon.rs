@@ -15,7 +15,7 @@ use sundial_core::config::{
 };
 use sundial_core::proto::{
     ActivityLine, AdminRequest, AdminResponse, AgentReport, AgentStatus, SessionInfo, Tracking,
-    UserStatus,
+    UsageBar, UserStatus,
 };
 use sundial_core::rules::{self, Verdict};
 use sundial_core::state::State;
@@ -305,6 +305,8 @@ impl Daemon {
                 now_doing: self.now_doing(p, &sessions, t),
                 activity_today: activity_lines(&us, &now, 1, 6),
                 activity_week: activity_lines(&us, &now, 7, 0),
+                usage_days: usage_days(&us, now.date_naive(), 14),
+                usage_weeks: usage_weeks(&us, now.date_naive(), 8),
                 sessions,
             });
         }
@@ -510,6 +512,65 @@ fn activity_lines(
         .collect();
     lines.sort_by(|a, b| b.secs.cmp(&a.secs).then(a.name.cmp(&b.name)));
     lines
+}
+
+/// Active seconds on `date`. Days from before daily totals were kept fall back to the
+/// activity totals (focused-window time, close to active time when tracking ran).
+fn day_secs(us: &sundial_core::state::UserState, date: chrono::NaiveDate) -> u64 {
+    let key = date.to_string();
+    if let Some(&s) = us.daily.get(&key) {
+        return s;
+    }
+    if us.today == key {
+        return us.today_active_secs;
+    }
+    us.activity
+        .get(&key)
+        .map(|d| d.totals.values().sum())
+        .unwrap_or(0)
+}
+
+/// The last `n` days ending `today`, oldest first.
+fn usage_days(
+    us: &sundial_core::state::UserState,
+    today: chrono::NaiveDate,
+    n: i64,
+) -> Vec<UsageBar> {
+    (0..n)
+        .rev()
+        .map(|i| {
+            let d = today - chrono::Duration::days(i);
+            UsageBar {
+                date: d.to_string(),
+                secs: day_secs(us, d),
+            }
+        })
+        .collect()
+}
+
+/// The last `n` Sunday-to-Saturday weeks ending with the current one, oldest first.
+fn usage_weeks(
+    us: &sundial_core::state::UserState,
+    today: chrono::NaiveDate,
+    n: i64,
+) -> Vec<UsageBar> {
+    use chrono::Datelike;
+    let sunday = today - chrono::Duration::days(i64::from(today.weekday().num_days_from_sunday()));
+    (0..n)
+        .rev()
+        .map(|w| {
+            let start = sunday - chrono::Duration::weeks(w);
+            let secs = (0..7)
+                .map(|i| start + chrono::Duration::days(i))
+                .filter(|d| *d <= today)
+                .map(|d| day_secs(us, d))
+                .sum();
+            UsageBar {
+                date: start.to_string(),
+                secs,
+            }
+        })
+        .collect()
 }
 
 /// "08:00-20:00" or "no access" for today.
@@ -728,5 +789,46 @@ async fn admin_server(shared: Shared) {
             out.push('\n');
             let _ = w.write_all(out.as_bytes()).await;
         });
+    }
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+    use chrono::NaiveDate;
+    use sundial_core::state::UserState;
+
+    #[test]
+    fn days_and_weeks() {
+        let d = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let mut us = UserState::default();
+        // Sunday Nov 15 .. Sunday Nov 22, 2026; Nov 14 only has activity totals (older data).
+        for (day, secs) in [
+            ("2026-11-15", 600),
+            ("2026-11-21", 1200),
+            ("2026-11-22", 300),
+        ] {
+            us.daily.insert(day.into(), secs);
+        }
+        us.activity
+            .entry("2026-11-14".into())
+            .or_default()
+            .totals
+            .insert("Minecraft".into(), 900);
+        let days = usage_days(&us, d("2026-11-22"), 14);
+        assert_eq!(days.len(), 14);
+        assert_eq!(days.last().unwrap().date, "2026-11-22");
+        assert_eq!(days.last().unwrap().secs, 300);
+        assert_eq!(days[12].secs, 1200);
+        let weeks = usage_weeks(&us, d("2026-11-22"), 3);
+        let got: Vec<(&str, u64)> = weeks.iter().map(|w| (w.date.as_str(), w.secs)).collect();
+        assert_eq!(
+            got,
+            [
+                ("2026-11-08", 900),
+                ("2026-11-15", 1800),
+                ("2026-11-22", 300)
+            ]
+        );
     }
 }

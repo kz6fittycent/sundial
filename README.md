@@ -17,6 +17,8 @@ before the session ends. Parents can change things from a phone on the home netw
   +15/+30/+60 minutes, take 15 minutes away, end a break or reset the session, allow use until a set time,
   or lock now or in 5 minutes (until a time or tomorrow morning). You can also change each day's start and
   stop times and the session, break and countdown lengths.
+  Beside each account's name is a chart of active time per day (last 14 days) or per week (last 8 weeks,
+  Sunday to Saturday), with today's or this week's total and the average.
 - **Activity**: what's in front and for how long, per day. Games like Minecraft are recognized by their
   window, and YouTube, Netflix, Twitch, Disney+ and other sites by the browser tab. The top video and page
   titles are kept, along with a 7-day summary. The agent reads the focused window on GNOME, Plasma,
