@@ -100,7 +100,9 @@ remove_dm_pam() {
 remove_pam() {
 	if [ -e /usr/share/pam-configs/sundial ]; then
 		rm -f /usr/share/pam-configs/sundial
-		command -v pam-auth-update >/dev/null 2>&1 && pam-auth-update --package --remove sundial || true
+		if command -v pam-auth-update >/dev/null 2>&1; then
+			pam-auth-update --package --remove sundial || true
+		fi
 	fi
 	remove_dm_pam
 }
