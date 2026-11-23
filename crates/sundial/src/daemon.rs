@@ -592,6 +592,9 @@ enum Effect {
 pub async fn run(cfg_path: PathBuf, state_path: PathBuf, web: bool) -> Result<()> {
     if let Some(dir) = state_path.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+        // Activity titles are private: root only (systemd's StateDirectoryMode isn't
+        // there when running from the snap).
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
     }
     let daemon = Daemon::new(cfg_path, state_path)?;
     let names = daemon.managed_names();

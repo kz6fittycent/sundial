@@ -1,0 +1,8 @@
+#!/bin/sh
+# Runs as root before the snap's files go away. The PAM check must go first: with
+# its program gone, managed accounts could not sign in.
+set -eu
+# shellcheck source=/dev/null
+. "$SNAP/share/setup.sh"
+remove_pam
+remove_files

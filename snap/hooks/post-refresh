@@ -1,0 +1,7 @@
+#!/bin/sh
+# After an update: refresh the files placed outside the snap.
+set -eu
+# shellcheck source=/dev/null
+. "$SNAP/share/setup.sh"
+install_files
+install_pam

@@ -71,7 +71,27 @@ isn't mistaken for walking away. The countdown window needs GTK 4.
 
 ## Install
 
-Build (Rust 1.85+, GTK 4 development files):
+As a snap (any distro with snapd; classic confinement, because Sundial hooks into sign-in):
+
+```sh
+sudo snap install sundial --classic
+sudoedit /etc/sundial/config.toml      # set the account name and hours
+sudo sundial check-config              # prints each day's window
+sudo snap restart sundial
+sudo sundial passwd mom                # parent login for the web page
+sudo sundial passwd dad
+```
+
+Installing adds the login check (`pam-auth-update` profile, Debian/Ubuntu family), the agent autostart entry
+and the GNOME Shell extension; removing the snap takes them out again. `/etc/sundial`, `/var/lib/sundial` and
+the `sundial-managed` group are kept, so a reinstall keeps parent logins and history. On distros without
+`pam-auth-update` (Fedora, openSUSE, Arch) everything works except the login screen refusal: a sign-in during
+a break or outside hours gets a 1 minute notice and is then ended. The daemon runs as the `sundial.daemon`
+service (`sudo snap logs sundial`).
+
+### From source
+
+Build (Rust 1.88+, GTK 4 development files):
 
 ```sh
 sudo apt install libgtk-4-dev
@@ -83,19 +103,16 @@ Install on the child's computer as root:
 ```sh
 mkdir dist && cp target/release/sundial target/release/sundial-agent packaging/* dist/
 sudo dist/install.sh
-sudoedit /etc/sundial/config.toml      # set the account name and hours
-sudo sundial check-config              # prints each day's window
+sudoedit /etc/sundial/config.toml
 sudo systemctl restart sundial
-sudo sundial passwd mom                # parent login for the web page
-sudo sundial passwd dad
 ```
 
 `install.sh` puts the binaries in `/usr/local/bin`, then installs the systemd unit, the agent autostart entry,
-the GNOME Shell extension (`/usr/share/gnome-shell/extensions/sundial@kz6fittycent.github.io`) and a
-`pam-auth-update` profile (Debian/Ubuntu). `uninstall.sh` removes them; `PURGE=1` also removes the
-config, state and group.
+the GNOME Shell extension (`/usr/share/gnome-shell/extensions/sundial@kz6fittycent.github.io`) and the
+`pam-auth-update` profile. `uninstall.sh` removes them; `PURGE=1` also removes the config, state and group.
+Don't mix the two: run `uninstall.sh` before installing the snap.
 
-A classic snap is planned (one package for every distro).
+Build the snap with `snapcraft pack`.
 
 ## Configuration
 
@@ -139,7 +156,7 @@ a comment inside the replaced `[user.schedule]` table does not. The previous fil
 
 Open `https://<computer>:8461/` and bookmark it. The certificate is self-signed, so the browser warns
 once. To check you've reached the right machine, compare the fingerprint with the one in
-`journalctl -u sundial`. Sign-ins last 30 days. After 5 wrong passwords from one address, that address waits
+`journalctl -u sundial` (snap: `sudo snap logs sundial -n 50`). Sign-ins last 30 days. After 5 wrong passwords from one address, that address waits
 15 minutes. Remove a login with `sudo sundial passwd NAME --delete`; this also signs it out.
 
 If the computer runs a firewall, allow the port from your LAN, for example

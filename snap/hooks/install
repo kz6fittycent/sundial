@@ -1,0 +1,13 @@
+#!/bin/sh
+# Runs as root when the snap is installed: put Sundial into the system's login and
+# desktop sessions. The remove hook undoes all of it.
+set -eu
+# shellcheck source=/dev/null
+. "$SNAP/share/setup.sh"
+install_files
+if [ ! -e /etc/sundial/config.toml ]; then
+	install -d -m 0755 /etc/sundial
+	install -m 0644 "$SNAP/share/config.example.toml" /etc/sundial/config.toml
+fi
+getent group sundial-managed >/dev/null || groupadd --system sundial-managed
+install_pam

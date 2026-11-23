@@ -1,0 +1,100 @@
+name: sundial
+title: Sundial
+summary: Screen time limits for Linux desktop accounts
+description: |
+  Sundial limits how long a child's desktop account can be used: a session of
+  active use, then a break, inside allowed hours per weekday. A countdown gives
+  time to save a game before the session ends, signing in during a break is
+  refused at the login screen, and parents can add time, lock, change hours and
+  see what was used (games, YouTube and other sites) from a web page on the home
+  network.
+
+  Works on GNOME, KDE Plasma, Cinnamon, MATE and Xfce.
+
+  After installing: edit /etc/sundial/config.toml (the account and hours), run
+  `sudo snap restart sundial`, then add a parent login with
+  `sudo sundial passwd NAME`. The page is at https://<this computer>:8461/.
+
+  Classic confinement is needed because Sundial is part of the system's login:
+  it adds a PAM check, ends or locks other users' sessions through
+  systemd-logind, installs an autostart entry for every desktop session and a
+  GNOME Shell extension.
+version: '0.3.0'
+license: GPL-3.0-or-later
+website: https://github.com/kz6fittycent/sundial
+source-code: https://github.com/kz6fittycent/sundial
+issues: https://github.com/kz6fittycent/sundial/issues
+contact: https://github.com/kz6fittycent/sundial/issues
+base: core24
+grade: stable
+confinement: classic
+platforms:
+  amd64:
+  arm64:
+
+apps:
+  sundial:
+    command: bin/sundial
+  daemon:
+    command: bin/sundial daemon
+    daemon: simple
+    restart-condition: always
+    restart-delay: 2s
+  agent:
+    command: bin/sundial-agent
+    environment:
+      # The agent's GTK and GLib are the snap's; keep the host's plug-ins out of
+      # them, and draw with cairo so no host GL driver gets loaded.
+      GIO_MODULE_DIR: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gio/modules
+      GDK_PIXBUF_MODULE_FILE: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gdk-pixbuf-2.0/2.10.0/loaders.cache
+      GSK_RENDERER: cairo
+      GDK_DEBUG: gl-disable
+      GDK_DISABLE: gl,vulkan
+      GTK_IM_MODULE: ""
+      GTK_PATH: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gtk-4.0
+
+parts:
+  sundial:
+    plugin: rust
+    source: .
+    rust-channel: stable
+    rust-path: [crates/sundial, crates/sundial-agent]
+    build-attributes: [enable-patchelf]
+    build-packages: [libgtk-4-dev, pkg-config]
+    stage-packages:
+      - libgtk-4-1
+      - libgdk-pixbuf-2.0-0
+      - librsvg2-common
+      - dconf-gsettings-backend
+    override-build: |
+      craftctl default
+      # Refresh the image loader list for the paths the snap is mounted at.
+      LOADERS=usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gdk-pixbuf-2.0/2.10.0
+      mkdir -p "$CRAFT_PART_INSTALL/$LOADERS"
+    override-prime: |
+      craftctl default
+      LOADERS=usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gdk-pixbuf-2.0/2.10.0
+      QUERY=/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders
+      GDK_PIXBUF_MODULEDIR="$CRAFT_PRIME/$LOADERS/loaders" "$QUERY" \
+        | sed "s|$CRAFT_PRIME|/snap/$CRAFT_PROJECT_NAME/current|g" > "$CRAFT_PRIME/$LOADERS/loaders.cache"
+      # Host tools (loginctl, setpriv, gdbus, ...) must come from the host, so no
+      # staged programs may sit ahead of them on PATH.
+      rm -rf "$CRAFT_PRIME/usr/bin" "$CRAFT_PRIME/usr/sbin" "$CRAFT_PRIME/sbin" "$CRAFT_PRIME/usr/libexec"
+    prime:
+      - -usr/share/doc
+      - -usr/share/man
+      - -usr/share/lintian
+      - -usr/share/bug
+
+  files:
+    plugin: dump
+    source: packaging
+    organize:
+      gnome-extension: share/gnome-shell-extension
+      config.example.toml: share/config.example.toml
+      pam-config: share/pam-config
+      setup.sh: share/setup.sh
+      sundial-agent.desktop: share/sundial-agent.desktop
+      io.github.kz6fittycent.Sundial.desktop: share/io.github.kz6fittycent.Sundial.desktop
+    stage:
+      - share
