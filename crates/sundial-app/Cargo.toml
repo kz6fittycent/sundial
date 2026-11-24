@@ -1,0 +1,13 @@
+[package]
+name = "sundial-app"
+description = "Sundial's window for parents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+sundial-core.workspace = true
+serde_json.workspace = true
+gtk = { package = "gtk4", version = "0.10" }
+pangocairo = "0.21"

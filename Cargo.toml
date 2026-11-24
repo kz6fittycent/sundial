@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/sundial-core", "crates/sundial-link", "crates/sundial-web", "crates/sundial", "crates/sundial-agent"]
+members = ["crates/sundial-core", "crates/sundial-link", "crates/sundial-web", "crates/sundial", "crates/sundial-agent", "crates/sundial-app"]
 
 [workspace.package]
 version = "0.3.0"
