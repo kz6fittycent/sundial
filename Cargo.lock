@@ -1553,20 +1553,18 @@ name = "sundial"
 version = "0.3.0"
 dependencies = [
  "anyhow",
- "argon2",
- "axum",
  "axum-server",
  "chrono",
  "clap",
  "futures-util",
  "libc",
- "rand 0.8.8",
  "rpassword",
  "rustls",
  "serde",
  "serde_json",
  "sundial-core",
  "sundial-link",
+ "sundial-web",
  "tokio",
  "tokio-tungstenite",
 ]
@@ -1603,6 +1601,20 @@ dependencies = [
  "serde_json",
  "sha2",
  "sundial-core",
+]
+
+[[package]]
+name = "sundial-web"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "axum",
+ "chrono",
+ "rand 0.8.8",
+ "serde",
+ "sundial-core",
+ "tokio",
 ]
 
 [[package]]

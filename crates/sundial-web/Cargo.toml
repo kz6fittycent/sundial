@@ -1,0 +1,17 @@
+[package]
+name = "sundial-web"
+description = "The parent page shared by Sundial and Sundial Server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+sundial-core.workspace = true
+serde.workspace = true
+chrono.workspace = true
+anyhow = "1"
+argon2 = "0.5"
+axum = { version = "0.8", features = ["form"] }
+rand = "0.8"
+tokio = { version = "1", features = ["rt"] }

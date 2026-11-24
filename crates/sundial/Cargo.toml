@@ -9,17 +9,15 @@ repository.workspace = true
 [dependencies]
 sundial-core.workspace = true
 sundial-link.workspace = true
+sundial-web.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "io-util", "signal", "sync", "process", "fs"] }
-axum = { version = "0.8", features = ["form"] }
 axum-server = { version = "0.7", features = ["tls-rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-argon2 = "0.5"
-rand = "0.8"
 rpassword = "7"
 libc = "0.2"
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }

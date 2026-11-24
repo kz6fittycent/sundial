@@ -1,6 +1,5 @@
 //! `sundial`: the daemon, the PAM login check, and the admin CLI.
 
-mod auth;
 mod daemon;
 mod link;
 mod logind;
@@ -211,12 +210,12 @@ fn passwd(name: &str, delete: bool, stdin: bool) -> Result<()> {
         bail!("name can't be empty or contain ':' or spaces");
     }
     let path = PathBuf::from(DEFAULT_ADMINS_PATH);
-    let mut admins = auth::read_admins(&path);
+    let mut admins = sundial_web::auth::read_admins(&path);
     if delete {
         if admins.remove(name).is_none() {
             bail!("no login named {name}");
         }
-        auth::write_admins(&path, &admins).context("writing admins (run as root)")?;
+        sundial_web::auth::write_admins(&path, &admins).context("writing admins (run as root)")?;
         println!("Removed {name}.");
         return Ok(());
     }
@@ -233,8 +232,8 @@ fn passwd(name: &str, delete: bool, stdin: bool) -> Result<()> {
     if !stdin && rpassword::prompt_password("Again: ")? != pw {
         bail!("passwords don't match");
     }
-    admins.insert(name.to_string(), auth::hash_password(&pw)?);
-    auth::write_admins(&path, &admins).context("writing admins (run as root)")?;
+    admins.insert(name.to_string(), sundial_web::auth::hash_password(&pw)?);
+    sundial_web::auth::write_admins(&path, &admins).context("writing admins (run as root)")?;
     println!("Saved login {name}.");
     Ok(())
 }
