@@ -6,6 +6,8 @@ use argon2::password_hash::{
     PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng,
 };
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
@@ -70,9 +72,10 @@ pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Serialize, Deserialize)]
 struct Session {
     user: String,
-    /// The password hash at sign-in; a changed password ends the session.
+    /// SHA-256 of the password hash at sign-in; a changed password ends the session.
     hash: String,
     until: i64,
 }
@@ -90,6 +93,13 @@ pub enum Login {
     Bad,
 }
 
+fn sha256(s: &str) -> String {
+    Sha256::digest(s.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 fn random_token() -> String {
     let mut bytes = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
@@ -98,7 +108,10 @@ fn random_token() -> String {
 
 pub struct Auth {
     admins_path: PathBuf,
+    /// SHA-256 of the token -> session
     sessions: Mutex<HashMap<String, Session>>,
+    /// Where sessions are kept over a restart, if they are.
+    sessions_path: Option<PathBuf>,
     /// Right password, code still to come.
     pending: Mutex<HashMap<String, Pending>>,
     /// parent name -> (wrong codes, first one's time)
@@ -116,11 +129,39 @@ impl Auth {
         Auth {
             admins_path,
             sessions: Mutex::default(),
+            sessions_path: None,
             pending: Mutex::default(),
             bad_codes: Mutex::default(),
             factors: Mutex::default(),
             failures: Mutex::default(),
             dummy: hash_password("sundial-dummy").unwrap_or_default(),
+        }
+    }
+
+    /// Keep sessions over restarts. The file can't be used to sign in: it has only
+    /// hashes of the tokens.
+    pub fn keep_sessions(mut self, path: PathBuf) -> Auth {
+        match std::fs::read(&path) {
+            Ok(b) => match serde_json::from_slice(&b) {
+                Ok(s) => self.sessions = Mutex::new(s),
+                Err(e) => eprintln!("sundial: {}: {e}; everyone signs in again", path.display()),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => eprintln!("sundial: {}: {e}", path.display()),
+        }
+        self.sessions_path = Some(path);
+        self
+    }
+
+    fn save_sessions(&self, s: &HashMap<String, Session>) {
+        let Some(path) = &self.sessions_path else {
+            return;
+        };
+        let r = serde_json::to_vec(s)
+            .map_err(Into::into)
+            .and_then(|b| write_private(path, &b));
+        if let Err(e) = r {
+            eprintln!("sundial: saving sessions: {e:#}");
         }
     }
 
@@ -163,13 +204,14 @@ impl Auth {
         let mut s = self.sessions.lock().unwrap();
         s.retain(|_, x| x.until > now);
         s.insert(
-            token.clone(),
+            sha256(&token),
             Session {
                 user: user.to_string(),
-                hash,
+                hash: sha256(&hash),
                 until: now + SESSION_DAYS * 86_400,
             },
         );
+        self.save_sessions(&s);
         token
     }
 
@@ -286,14 +328,18 @@ impl Auth {
     pub fn check(&self, token: &str, now: i64) -> Option<String> {
         let (user, hash) = {
             let s = self.sessions.lock().unwrap();
-            let x = s.get(token).filter(|x| x.until > now)?;
+            let x = s.get(&sha256(token)).filter(|x| x.until > now)?;
             (x.user.clone(), x.hash.clone())
         };
-        (read_admins(&self.admins_path).get(&user) == Some(&hash)).then_some(user)
+        let current = read_admins(&self.admins_path).remove(&user)?;
+        (sha256(&current) == hash).then_some(user)
     }
 
     pub fn logout(&self, token: &str) {
-        self.sessions.lock().unwrap().remove(token);
+        let mut s = self.sessions.lock().unwrap();
+        if s.remove(&sha256(token)).is_some() {
+            self.save_sessions(&s);
+        }
     }
 }
 
@@ -346,6 +392,31 @@ mod tests {
             auth.check(&tok, 11).is_none(),
             "deleted login is signed out"
         );
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn sessions_survive_a_restart() {
+        let (path, auth, ip) = fixture("keep");
+        let file = path.with_file_name("sessions.json");
+        let auth = auth.keep_sessions(file.clone());
+        let a = token(auth.login(ip, "mom", "pw1", 0)).unwrap();
+        let b = token(auth.login(ip, "mom", "pw1", 0)).unwrap();
+        auth.logout(&b);
+        let saved = std::fs::read_to_string(&file).unwrap();
+        assert!(!saved.contains(&a), "only hashes are stored");
+        let again = || Auth::new(path.clone()).keep_sessions(file.clone());
+        assert_eq!(again().check(&a, 10).as_deref(), Some("mom"));
+        assert!(again().check(&b, 10).is_none(), "signed out stays out");
+        assert!(
+            again().check(&sha256(&a), 10).is_none(),
+            "a stored hash is no token"
+        );
+        assert!(again().check(&a, SESSION_DAYS * 86_400).is_none());
+        set(&path, "pw1");
+        assert!(again().check(&a, 10).is_none(), "password set again");
+        std::fs::write(&file, "junk").unwrap();
+        assert!(again().check(&a, 10).is_none());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 

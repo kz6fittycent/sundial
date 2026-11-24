@@ -161,6 +161,18 @@ async fn recv(ws: &mut Ws) -> Result<ServerMsg> {
     }
 }
 
+/// Derived from the machine id, which itself stays private (machine-id(5)).
+fn machine() -> Option<String> {
+    let id = std::fs::read_to_string("/etc/machine-id").ok()?;
+    let id = id.trim();
+    if id.is_empty() {
+        return None;
+    }
+    let mut h = sundial_link::sha256_hex(format!("sundial-link:{id}").as_bytes());
+    h.truncate(32);
+    Some(h)
+}
+
 async fn hello(ws: &mut Ws, auth: Auth) -> Result<(String, Option<String>)> {
     send(
         ws,
@@ -169,6 +181,7 @@ async fn hello(ws: &mut Ws, auth: Auth) -> Result<(String, Option<String>)> {
             name: crate::sys::hostname(),
             version: env!("CARGO_PKG_VERSION").into(),
             auth,
+            machine: machine(),
         },
     )
     .await?;

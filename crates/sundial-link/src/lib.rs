@@ -28,6 +28,10 @@ pub enum HostMsg {
         name: String,
         version: String,
         auth: Auth,
+        /// The same for every pairing of this computer, so pairing again replaces
+        /// its entry. Absent from older hosts.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        machine: Option<String>,
     },
     /// Everything the host knows about its accounts.
     Status { status: Box<AdminResponse> },
