@@ -41,10 +41,25 @@ pub trait Backend: Send + Sync + 'static {
     fn handle(&self, key: &str, req: AdminRequest) -> Result<String, String>;
     /// Shown on the sign-in page while there are no logins.
     fn passwd_command(&self) -> &'static str;
-    /// HTML shown after the accounts.
-    fn extra(&self) -> String {
-        String::new()
+    /// Tabs after Today and Hours and limits.
+    fn tabs(&self) -> Vec<Tab> {
+        Vec::new()
     }
+    /// The HTML of one of those tabs, if this page shows it (`/?tab=ID`).
+    fn tab(&self, _id: &str) -> Option<String> {
+        None
+    }
+    /// Shown while there are no accounts on any computer.
+    fn empty(&self) -> String {
+        "No accounts are managed. Add one to <code>/etc/sundial/config.toml</code> on this computer."
+            .into()
+    }
+}
+
+pub struct Tab {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub href: &'static str,
 }
 
 #[derive(Clone)]
@@ -121,6 +136,9 @@ pub fn security_headers(mut r: Response) -> Response {
 
 #[derive(Deserialize, Default)]
 struct IndexQuery {
+    tab: Option<String>,
+    /// The account shown, as in `split_key`.
+    who: Option<String>,
     msg: Option<String>,
     err: Option<String>,
 }
@@ -136,12 +154,7 @@ async fn index(
             app.auth.has_admins(),
             app.backend.passwd_command(),
         ),
-        Some(parent) => dashboard(
-            &parent,
-            app.backend.as_ref(),
-            q.msg.as_deref(),
-            q.err.as_deref(),
-        ),
+        Some(parent) => dashboard(&parent, app.backend.as_ref(), &q),
     };
     security_headers(Html(page).into_response())
 }
@@ -343,12 +356,13 @@ fn html_id(key: &str) -> String {
         .collect()
 }
 
-fn back(user: &str, r: Result<String, String>) -> Response {
-    let target = match r {
-        Ok(m) => format!("/?msg={}", enc(&format!("{user}: {m}"))),
-        Err(e) => format!("/?err={}", enc(&e)),
+/// To the tab and account the form was on.
+fn back(tab: &str, who: &str, r: Result<String, String>) -> Response {
+    let q = match r {
+        Ok(m) => format!("msg={}", enc(&format!("{}: {m}", split_key(who).1))),
+        Err(e) => format!("err={}", enc(&e)),
     };
-    Redirect::to(&target).into_response()
+    Redirect::to(&format!("/?tab={tab}&who={}&{q}", enc(who))).into_response()
 }
 
 async fn act(
@@ -372,7 +386,7 @@ async fn act(
         };
         app.backend.handle(key, req)
     });
-    back(user, r)
+    back("today", &f.user, r)
 }
 
 async fn settings(
@@ -397,7 +411,7 @@ async fn settings(
         };
         app.backend.handle(key, req)
     });
-    back(user, r)
+    back("limits", &target, r)
 }
 
 pub fn esc(s: &str) -> String {
@@ -412,7 +426,7 @@ pub const STYLE: &str = r#"
 :root{--bg:#f6f4ef;--card:#fff;--ink:#1d1b16;--muted:#6b665c;--line:#e4dfd4;--accent:#c47a12;--ok:#2e7d4f;--stop:#b3261e;--wait:#8a6d1d}
 @media (prefers-color-scheme:dark){:root{--bg:#16150f;--card:#211f18;--ink:#eee9dd;--muted:#a39d8f;--line:#38342a;--accent:#e6a23c;--ok:#5cc28a;--stop:#ef7b72;--wait:#d8b24a}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:720px;margin:0 auto;padding:20px 16px 48px}
+main{max-width:720px;margin:0 auto;padding:20px 16px 48px}main.wide{max-width:980px}
 header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
 h1{font-size:22px;margin:0;display:flex;align-items:center;gap:8px}h1 span{color:var(--accent)}
 h2{font-size:20px;margin:0 0 4px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -442,6 +456,7 @@ table{border-collapse:collapse;font-size:14px}td,th{padding:4px 10px 4px 0;text-
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:10px}.grid label{display:flex;flex-direction:column;gap:4px}
 .grid input,.grid select{width:100%}
 .top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px 20px;flex-wrap:wrap}
+.lead{flex:1 1 280px;min-width:0}
 .usage{flex:0 1 300px;min-width:0;width:300px;max-width:100%;position:relative}
 .usage>input{position:absolute;opacity:0;pointer-events:none}
 .usage>label{display:inline-block;font-size:13px;font-weight:600;padding:2px 12px;border:1px solid var(--line);color:var(--muted);cursor:pointer}
@@ -453,7 +468,17 @@ table{border-collapse:collapse;font-size:14px}td,th{padding:4px 10px 4px 0;text-
 .usage svg{display:block;width:100%;height:auto}
 .usage .axis{font-size:10px;fill:var(--muted)}.usage .grid{stroke:var(--line);stroke-dasharray:3 3}.usage .base{stroke:var(--line)}
 .usage .past{fill:var(--accent);opacity:.5}.usage .cur{fill:var(--accent)}.usage .hit{fill:transparent}
-h2.host{margin:24px 0 8px}
+.panel{display:grid;grid-template-columns:180px minmax(0,1fr);gap:20px;align-items:start}
+nav.tabs{display:flex;flex-direction:column;gap:2px;position:sticky;top:16px;border-right:1px solid var(--line);padding-right:14px;min-height:60vh}
+nav.tabs a{padding:8px 12px;border-radius:10px;color:var(--ink);text-decoration:none;white-space:nowrap}
+nav.tabs a:hover{background:var(--card)}nav.tabs a[aria-current]{background:var(--card);box-shadow:inset 3px 0 var(--accent);font-weight:600}
+nav.tabs a:focus-visible{outline:2px solid var(--accent)}
+.who{display:flex;gap:8px;align-items:center}.who select{max-width:100%;font-weight:600;background:var(--card)}
+header{flex-wrap:wrap}header form{min-width:0}.who{flex:1;justify-content:flex-start;margin-left:8px}
+@media(max-width:700px){.panel{grid-template-columns:minmax(0,1fr);gap:14px}
+nav.tabs{flex-direction:row;overflow-x:auto;position:static;min-height:0;border-right:0;border-bottom:1px solid var(--line);padding:0}
+nav.tabs a{padding:8px 7px;font-size:14px;border-radius:10px 10px 0 0}nav.tabs a[aria-current]{box-shadow:inset 0 -3px var(--accent)}
+.who{order:3;flex-basis:100%;margin:0}.who select{width:100%}}
 .code{font:600 22px/1.3 ui-monospace,monospace;letter-spacing:.04em}
 .usage g:hover .past{opacity:.8}
 "#;
@@ -470,8 +495,13 @@ pub fn shell(title: &str, body: &str, refresh: bool) -> String {
         "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">\
          <title>{}</title><meta name=color-scheme content=\"light dark\">\
          <link rel=icon href=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%23c47a12'/%3E%3Cpath d='M8 8V3' stroke='white' stroke-width='1.6'/%3E%3C/svg%3E\">\
-         <style>{STYLE}</style></head><body><main>{body}</main>{script}</body></html>",
-        esc(title)
+         <style>{STYLE}</style></head><body><main{}>{body}</main>{script}</body></html>",
+        esc(title),
+        if body.contains("<nav class=tabs") {
+            " class=wide"
+        } else {
+            ""
+        }
     )
 }
 
@@ -605,8 +635,8 @@ fn user_card(u: &UserStatus, key: &str, now: &chrono::DateTime<Local>) -> String
         String::new()
     };
     format!(
-        "<section class=card><div class=top><h2>{name} <span class='pill {class}'>{label}</span></h2>{}</div>\
-         <p class=big>{}</p>{bar}<dl class=meta>{meta}</dl>\
+        "<section class=card><div class=top><div class=lead><h2>{name} <span class='pill {class}'>{label}</span></h2>\
+         <p class=big>{}</p>{bar}<dl class=meta>{meta}</dl></div>{}</div>\
          <form method=post action=/act class=row><input type=hidden name=user value=\"{key}\">\
            <button class=primary name=action value=grant15>+15 min</button>\
            <button class=primary name=action value=grant30>+30 min</button>\
@@ -618,11 +648,10 @@ fn user_card(u: &UserStatus, key: &str, now: &chrono::DateTime<Local>) -> String
          <form method=post action=/act class=row><input type=hidden name=user value=\"{key}\">\
            <label>Lock</label><select name=lock_in><option value=300>in 5 min (countdown)</option><option value=0>now (1 min notice)</option></select>\
            <label>until</label><select name=lock_for><option value=rest>tomorrow's start</option><option value=30>30 min</option><option value=60>1 hour</option><option value=120>2 hours</option></select>\
-           <button class=danger name=action value=lock>Lock</button></form>{clear}{}{}</section>",
-        usage_html(u, &id),
+           <button class=danger name=action value=lock>Lock</button></form>{clear}</section>{}",
         esc(&u.summary),
+        usage_html(u, &id),
         activity_html(u),
-        settings_html(u, &key),
     )
 }
 
@@ -630,7 +659,7 @@ fn activity_html(u: &UserStatus) -> String {
     if !u.track_activity {
         return String::new();
     }
-    let mut h = String::from("<h3>Activity</h3>");
+    let mut h = String::from("<section class=card><h2>Today's activity</h2>");
     match u.tracking {
         Tracking::NoAgent => h.push_str(
             "<p class='flash err'>Activity tracking isn't running: the Sundial agent isn't connected in the \
@@ -688,7 +717,7 @@ fn activity_html(u: &UserStatus) -> String {
         }
         h.push_str("</table></details>");
     }
-    h
+    h + "</section>"
 }
 
 /// Usage report beside the name: active time per day (14 days) or per week (8 weeks),
@@ -837,7 +866,7 @@ fn settings_html(u: &UserStatus, key: &str) -> String {
     }
     let sel = |a: Action| if p.action == a { "selected" } else { "" };
     format!(
-        "<details class=settings><summary>Hours &amp; limits</summary>\
+        "<section class=card><h2>Hours and limits for {}</h2>\
          <form method=post action=/settings><input type=hidden name=user value=\"{key}\">\
          <table class=days><tr><th>Day</th><th>Start</th><th>Stop</th></tr>{rows}</table>\
          <p class=muted>Unchecked = no access that day. A stop time of 00:00 means midnight.</p>\
@@ -847,7 +876,8 @@ fn settings_html(u: &UserStatus, key: &str) -> String {
            <label>Countdown minutes <input type=number name=warn_minutes min=1 max=60 value={}></label>\
            <label>When time is up <select name=action><option value=logout {}>Log out</option><option value=lock {}>Lock screen</option></select></label>\
          </div><p class=muted>Minutes on = 0 turns off the session limit (hours still apply).</p>\
-         <div class=row><button class=primary>Save</button></div></form></details>",
+         <div class=row><button class=primary>Save</button></div></form></section>",
+        esc(&u.name),
         p.session_minutes,
         p.break_minutes,
         p.warn_minutes,
@@ -909,57 +939,165 @@ fn parse_settings(f: &HashMap<String, String>) -> Result<PolicyUpdate, String> {
     })
 }
 
-fn dashboard(parent: &str, backend: &dyn Backend, msg: Option<&str>, err: Option<&str>) -> String {
-    let now = Local::now();
-    let mut body = format!(
-        "<header><h1>☀ <span>Sundial</span> <small class=muted>{}</small></h1>\
-         <form method=post action=/logout><button>Sign out {}</button></form></header>",
-        esc(&backend.subtitle()),
-        esc(parent)
+/// The tabs beside a page's content. `who` keeps the chosen account.
+pub fn panel(tabs: &[Tab], active: &str, who: &str, body: &str) -> String {
+    let mut nav = String::from("<div class=panel><nav class=tabs aria-label=Sections>");
+    let main = [("today", "Today"), ("limits", "Hours and limits")];
+    let link = |id: &str, label: &str, href: &str| {
+        let on = if id == active {
+            " aria-current=page"
+        } else {
+            ""
+        };
+        format!("<a href=\"{}\"{on}>{}</a>", esc(href), esc(label))
+    };
+    for (id, label) in main {
+        let mut href = format!("/?tab={id}");
+        if !who.is_empty() {
+            href.push_str(&format!("&who={}", enc(who)));
+        }
+        nav.push_str(&link(id, label, &href));
+    }
+    for t in tabs {
+        nav.push_str(&link(t.id, t.label, t.href));
+    }
+    format!("{nav}</nav><div>{body}</div></div>")
+}
+
+fn flash_html(q: &IndexQuery) -> String {
+    let mut h = String::new();
+    if let Some(m) = &q.msg {
+        h.push_str(&format!("<div class=flash>{}</div>", esc(m)));
+    }
+    if let Some(e) = &q.err {
+        h.push_str(&format!("<div class='flash err'>{}</div>", esc(e)));
+    }
+    h
+}
+
+/// Every account as (key, computer, account).
+fn accounts(sections: &[Section]) -> Vec<(String, &Section, &UserStatus)> {
+    sections
+        .iter()
+        .flat_map(|s| {
+            s.status.users.iter().map(move |u| {
+                let key = if s.key.is_empty() {
+                    u.name.clone()
+                } else {
+                    format!("{}/{}", s.key, u.name)
+                };
+                (key, s, u)
+            })
+        })
+        .collect()
+}
+
+/// Choosing an account reloads the page; without JavaScript there is a button.
+fn chooser(all: &[(String, &Section, &UserStatus)], at: usize, tab: &str) -> String {
+    let mut h = format!(
+        "<form class=who method=get action=/><input type=hidden name=tab value=\"{}\">\
+         <select name=who aria-label=Child onchange=\"this.form.submit()\">",
+        esc(tab)
     );
-    if let Some(m) = msg {
-        body.push_str(&format!("<div class=flash>{}</div>", esc(m)));
+    for (i, (key, s, u)) in all.iter().enumerate() {
+        let place = s
+            .title
+            .as_ref()
+            .map(|t| format!(" on {t}"))
+            .unwrap_or_default();
+        h.push_str(&format!(
+            "<option value=\"{}\"{}>{}{}: {}</option>",
+            esc(key),
+            if i == at { " selected" } else { "" },
+            esc(&u.name),
+            esc(&place),
+            pill(u).0
+        ));
     }
-    if let Some(e) = err {
-        body.push_str(&format!("<div class='flash err'>{}</div>", esc(e)));
-    }
-    for s in backend.sections() {
-        if let Some(t) = &s.title {
-            body.push_str(&format!("<h2 class=host>{}</h2>", esc(t)));
-        }
-        if let Some(n) = &s.note {
-            body.push_str(&format!("<p class=muted>{}</p>", esc(n)));
-        }
-        if s.status.users.is_empty() {
-            body.push_str("<section class=card>No accounts are managed. Add one to <code>/etc/sundial/config.toml</code> on the computer.</section>");
-        }
-        for u in &s.status.users {
-            let key = if s.key.is_empty() {
-                u.name.clone()
-            } else {
-                format!("{}/{}", s.key, u.name)
-            };
-            body.push_str(&user_card(u, &key, &now));
-        }
-        if !s.status.log.is_empty() {
-            body.push_str("<section class=card><h2>Recent</h2><ul class=log>");
-            for e in s.status.log.iter().take(25) {
+    h + "</select><noscript><button>Show</button></noscript></form>"
+}
+
+fn dashboard(parent: &str, backend: &dyn Backend, q: &IndexQuery) -> String {
+    let now = Local::now();
+    let sections = backend.sections();
+    let all = accounts(&sections);
+    let at = q
+        .who
+        .as_ref()
+        .and_then(|w| all.iter().position(|a| a.0 == *w))
+        .unwrap_or(0);
+    let who = all.get(at).map_or("", |a| a.0.as_str());
+    let asked = q.tab.as_deref().unwrap_or("today");
+    let extra = backend.tab(asked);
+    let tab = match asked {
+        "limits" => "limits",
+        t if extra.is_some() => t,
+        _ => "today",
+    };
+    let choose = if extra.is_none() && !all.is_empty() {
+        chooser(&all, at, tab)
+    } else {
+        String::new()
+    };
+    let mut body = flash_html(q);
+    match (extra, all.get(at)) {
+        (Some(html), _) => body.push_str(&html),
+        (None, None) => body.push_str(&format!(
+            "<section class=card>{}</section>",
+            backend.empty()
+        )),
+        (None, Some((key, s, u))) => {
+            if let Some(t) = &s.title {
+                let note = s.note.as_deref().unwrap_or_default();
                 body.push_str(&format!(
-                    "<li><time>{}</time><b>{}</b> {}</li>",
-                    esc(&fmt_when(e.ts, &now)),
-                    esc(&e.user),
-                    esc(&e.text)
+                    "<p class=muted><b>{}</b> {}</p>",
+                    esc(t),
+                    esc(note)
                 ));
             }
-            body.push_str("</ul></section>");
+            if tab == "limits" {
+                body.push_str(&settings_html(u, &esc(key)));
+            } else {
+                body.push_str(&user_card(u, key, &now));
+                body.push_str(&recent(s, &u.name, &now));
+            }
         }
     }
-    body.push_str(&backend.extra());
     body.push_str(&format!(
         "<p class=muted>Updated {}</p>",
         now.format("%-I:%M:%S %p")
     ));
-    shell("Sundial", &body, true)
+    let page = format!(
+        "<header><h1>☀ <span>Sundial</span> <small class=muted>{}</small></h1>{choose}\
+         <form method=post action=/logout><button>Sign out {}</button></form></header>{}",
+        esc(&backend.subtitle()),
+        esc(parent),
+        panel(&backend.tabs(), tab, who, &body)
+    );
+    // Not while a parent may be filling in the hours.
+    shell("Sundial", &page, tab != "limits")
+}
+
+/// The account's last events.
+fn recent(s: &Section, user: &str, now: &chrono::DateTime<Local>) -> String {
+    let lines: String = s
+        .status
+        .log
+        .iter()
+        .filter(|e| e.user == user)
+        .take(25)
+        .map(|e| {
+            format!(
+                "<li><time>{}</time>{}</li>",
+                esc(&fmt_when(e.ts, now)),
+                esc(&e.text)
+            )
+        })
+        .collect();
+    if lines.is_empty() {
+        return lines;
+    }
+    format!("<section class=card><h2>Recent</h2><ul class=log>{lines}</ul></section>")
 }
 
 #[cfg(test)]
@@ -972,6 +1110,19 @@ mod tests {
             m.insert(k.clone(), v.parse().unwrap());
         }
         m
+    }
+
+    #[test]
+    fn tabs() {
+        let t = [Tab {
+            id: "computers",
+            label: "Computers",
+            href: "/?tab=computers",
+        }];
+        let h = panel(&t, "limits", "ab12/sam", "x");
+        assert!(h.contains("href=\"/?tab=limits&amp;who=ab12%2Fsam\" aria-current=page"));
+        assert_eq!(h.matches("aria-current").count(), 1);
+        assert!(!panel(&t, "computers", "", "x").contains("who="));
     }
 
     #[test]
