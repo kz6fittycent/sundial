@@ -610,6 +610,7 @@ pub async fn run(cfg_path: PathBuf, state_path: PathBuf, web: bool) -> Result<()
 
     tokio::spawn(agent_server(shared.clone()));
     tokio::spawn(admin_server(shared.clone()));
+    tokio::spawn(crate::link::run(shared.clone()));
     if web && web_cfg.enabled {
         let s = shared.clone();
         tokio::spawn(async move {

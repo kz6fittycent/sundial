@@ -33,8 +33,12 @@ pub async fn serve(daemon: Shared, listen: &str) -> Result<()> {
         .parse()
         .with_context(|| format!("bad web listen address {listen:?}"))?;
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let files = crate::tls::ensure_cert(std::path::Path::new(crate::tls::TLS_DIR))?;
-    if let Some(fp) = crate::tls::fingerprint(&files.cert) {
+    let files = sundial_link::tls::ensure_cert(
+        std::path::Path::new("/var/lib/sundial/tls"),
+        &crate::sys::hostname(),
+        crate::sys::addresses(),
+    )?;
+    if let Some(fp) = sundial_link::tls::fingerprint(&files.cert) {
         println!(
             "sundial: web page on https://{}:{} (certificate SHA-256 {fp})",
             crate::sys::hostname(),

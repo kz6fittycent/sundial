@@ -2,9 +2,9 @@
 
 mod auth;
 mod daemon;
+mod link;
 mod logind;
 mod sys;
-mod tls;
 mod web;
 
 use anyhow::{Context, Result, bail};
@@ -66,6 +66,14 @@ enum Cmd {
         #[arg(long, conflicts_with = "delete")]
         stdin: bool,
     },
+    /// Connect this computer to a Sundial Server (get the code there).
+    Pair {
+        /// Server address, for example sundial.example.com or 192.168.1.5:8461.
+        server: String,
+        code: String,
+    },
+    /// Disconnect from the Sundial Server.
+    Unpair,
     /// Show each managed account's status and recent events.
     Status,
     /// Give extra minutes now (on top of any time left).
@@ -119,6 +127,10 @@ fn real_main() -> Result<()> {
             delete,
             stdin,
         } => passwd(&name, delete, stdin),
+        Cmd::Pair { server, code } => {
+            tokio::runtime::Runtime::new()?.block_on(link::pair(&server, &code))
+        }
+        Cmd::Unpair => link::unpair(),
         Cmd::Status => print_status(send(AdminRequest::Status)?),
         Cmd::Grant { user, minutes } => act(user, Override::Grant { minutes }),
         Cmd::Take { user, minutes } => act(user, Override::TakeTime { minutes }),

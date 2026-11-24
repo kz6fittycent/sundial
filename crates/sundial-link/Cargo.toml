@@ -1,0 +1,16 @@
+[package]
+name = "sundial-link"
+description = "Protocol between Sundial and Sundial Server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+sundial-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow = "1"
+rand = "0.8"
+rcgen = "0.13"
+sha2 = "0.10"

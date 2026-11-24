@@ -1,11 +1,9 @@
-//! Self-signed certificate for the LAN web page, created on first start.
+//! Self-signed certificate, created on first start.
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-
-pub const TLS_DIR: &str = "/var/lib/sundial/tls";
 
 pub struct CertFiles {
     pub cert: PathBuf,
@@ -24,8 +22,8 @@ fn write_private(path: &Path, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Reuse the existing cert or make one for this host's name and addresses.
-pub fn ensure_cert(dir: &Path) -> Result<CertFiles> {
+/// Reuse the existing cert or make one for these names and addresses.
+pub fn ensure_cert(dir: &Path, host: &str, addresses: Vec<String>) -> Result<CertFiles> {
     let files = CertFiles {
         cert: dir.join("cert.pem"),
         key: dir.join("key.pem"),
@@ -34,17 +32,23 @@ pub fn ensure_cert(dir: &Path) -> Result<CertFiles> {
         return Ok(files);
     }
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-    let host = crate::sys::hostname();
     let mut names = vec![
-        host.clone(),
+        host.to_string(),
         format!("{host}.local"),
         "localhost".to_string(),
     ];
-    names.extend(crate::sys::addresses());
+    names.extend(addresses);
     let ck = rcgen::generate_simple_self_signed(names).context("generating certificate")?;
     write_private(&files.key, ck.key_pair.serialize_pem().as_bytes())?;
     write_private(&files.cert, ck.cert.pem().as_bytes())?;
     Ok(files)
+}
+
+/// Certificate (DER) from a PEM file.
+pub fn cert_der(cert_pem: &Path) -> Option<Vec<u8>> {
+    let pem = std::fs::read_to_string(cert_pem).ok()?;
+    let b64: String = pem.lines().filter(|l| !l.starts_with("-----")).collect();
+    base64_decode(&b64)
 }
 
 /// SHA-256 fingerprint of the certificate, as browsers show it (AB:CD:...).
