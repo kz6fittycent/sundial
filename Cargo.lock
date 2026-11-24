@@ -883,6 +883,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest 0.10.7",
+]
+
+[[package]]
 name = "http"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1478,6 +1487,17 @@ dependencies = [
 
 [[package]]
 name = "sha1"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "digest 0.10.7",
+]
+
+[[package]]
+name = "sha1"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
@@ -1611,8 +1631,12 @@ dependencies = [
  "argon2",
  "axum",
  "chrono",
+ "hmac",
  "rand 0.8.8",
  "serde",
+ "serde_json",
+ "sha1 0.10.7",
+ "sha2",
  "sundial-core",
  "tokio",
 ]
@@ -1920,7 +1944,7 @@ dependencies = [
  "rand 0.10.4",
  "rustls",
  "rustls-pki-types",
- "sha1",
+ "sha1 0.11.0",
  "thiserror",
 ]
 

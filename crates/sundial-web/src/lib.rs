@@ -2,8 +2,9 @@
 //! and the overrides. Server-rendered HTML, no JavaScript framework.
 
 pub mod auth;
+pub mod two_factor;
 
-use auth::{Auth, SESSION_DAYS};
+use auth::{Auth, Login, SESSION_DAYS};
 use axum::extract::{ConnectInfo, Form, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
@@ -57,6 +58,7 @@ pub fn router(app: App) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/login", post(login))
+        .route("/login/code", post(login_code))
         .route("/logout", post(logout))
         .route("/act", post(act))
         .route("/settings", post(settings))
@@ -110,7 +112,7 @@ pub fn security_headers(mut r: Response) -> Response {
     h.insert("referrer-policy", "same-origin".parse().unwrap());
     h.insert(
         header::CONTENT_SECURITY_POLICY,
-        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'"
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'"
             .parse()
             .unwrap(),
     );
@@ -180,23 +182,74 @@ async fn login(
     let auth = app.auth.clone();
     let (user, pw) = (f.user.trim().to_string(), f.password);
     // Argon2 is deliberately slow; keep it off the async workers.
-    let token = tokio::task::spawn_blocking(move || auth.login(ip, &user, &pw, now))
+    let r = tokio::task::spawn_blocking(move || auth.login(ip, &user, &pw, now))
         .await
-        .ok()
-        .flatten();
-    match token {
-        Some(t) => {
-            let cookie = format!(
-                "{COOKIE}={t}; Path=/; Max-Age={}; HttpOnly; Secure; SameSite=Strict",
-                SESSION_DAYS * 86_400
-            );
-            ([(header::SET_COOKIE, cookie)], Redirect::to("/")).into_response()
-        }
-        None => {
+        .unwrap_or(Login::Bad);
+    match r {
+        Login::In(t) => signed_in_response(&t, "/"),
+        Login::Code(p) => security_headers(Html(code_page(&p, None)).into_response()),
+        Login::Bad => {
             println!("sundial: failed web sign-in from {ip}");
             Redirect::to("/?err=Wrong%20name%20or%20password.").into_response()
         }
     }
+}
+
+/// Set the session cookie and go to a page.
+pub fn signed_in_response(token: &str, to: &str) -> Response {
+    let cookie = format!(
+        "{COOKIE}={token}; Path=/; Max-Age={}; HttpOnly; Secure; SameSite=Strict",
+        SESSION_DAYS * 86_400
+    );
+    ([(header::SET_COOKIE, cookie)], Redirect::to(to)).into_response()
+}
+
+#[derive(Deserialize)]
+struct CodeForm {
+    pending: String,
+    code: String,
+}
+
+async fn login_code(
+    State(app): State<App>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    uri: Uri,
+    headers: HeaderMap,
+    Form(f): Form<CodeForm>,
+) -> Response {
+    if !same_origin(&headers, &uri) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let (now, ip) = (Local::now().timestamp(), peer.ip());
+    if app.auth.throttled(ip, now) {
+        return Redirect::to("/?err=Too%20many%20tries.%20Wait%2015%20minutes.").into_response();
+    }
+    match app.auth.finish(ip, &f.pending, &f.code, now) {
+        Some(t) => signed_in_response(&t, "/"),
+        None => {
+            println!("sundial: wrong two-factor code from {ip}");
+            security_headers(
+                Html(code_page(&f.pending, Some("That code didn't work."))).into_response(),
+            )
+        }
+    }
+}
+
+fn code_page(pending: &str, err: Option<&str>) -> String {
+    let flash = err
+        .map(|e| format!("<div class='flash err'>{}</div>", esc(e)))
+        .unwrap_or_default();
+    shell(
+        "Sundial",
+        &format!(
+            "<div class='card login'><h1>☀ <span>Sundial</span></h1><p class=muted>Enter the code from your authenticator app, or a recovery code.</p>{flash}\
+             <form method=post action=/login/code><input type=hidden name=pending value=\"{}\">\
+             <input name=code placeholder=Code autocomplete=one-time-code autocapitalize=none maxlength=40 autofocus required>\
+             <button class=primary>Sign in</button></form><p><a href=/>Start over</a></p></div>",
+            esc(pending)
+        ),
+        false,
+    )
 }
 
 async fn logout(State(app): State<App>, headers: HeaderMap) -> Response {

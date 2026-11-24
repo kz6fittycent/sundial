@@ -15,3 +15,7 @@ argon2 = "0.5"
 axum = { version = "0.8", features = ["form"] }
 rand = "0.8"
 tokio = { version = "1", features = ["rt"] }
+hmac = "0.12"
+serde_json = "1"
+sha1 = "0.10"
+sha2 = "0.10"
