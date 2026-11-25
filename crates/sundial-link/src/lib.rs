@@ -71,7 +71,7 @@ const HOUR: i64 = 3600;
 /// quickly; limits and locks are still wanted later.
 pub fn expiry(req: &AdminRequest, now: i64) -> i64 {
     match req {
-        AdminRequest::SetPolicy { .. } => now + 7 * 24 * HOUR,
+        AdminRequest::SetPolicy { .. } | AdminRequest::SetLocation { .. } => now + 7 * 24 * HOUR,
         AdminRequest::Act { action, .. } => match action {
             Override::AllowUntil { at } => *at,
             Override::Lock { until: Some(u), .. } => *u,

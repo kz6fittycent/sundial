@@ -48,6 +48,9 @@ pub const DAILY_KEEP: usize = 70;
 #[serde(default)]
 pub struct State {
     pub users: BTreeMap<String, UserState>,
+    /// A parent turned location on.
+    pub location_on: bool,
+    pub location: Option<crate::proto::Fix>,
     pub log: Vec<LogEntry>,
 }
 

@@ -21,7 +21,7 @@ install_files() {
 }
 
 remove_files() {
-	rm -f "$BIN" /etc/xdg/autostart/sundial-agent.desktop /usr/share/applications/io.github.kz6fittycent.Sundial.desktop
+	rm -f "$BIN" /etc/geoclue/conf.d/90-sundial.conf /etc/xdg/autostart/sundial-agent.desktop /usr/share/applications/io.github.kz6fittycent.Sundial.desktop
 	rm -rf "/usr/share/gnome-shell/extensions/$EXT"
 }
 

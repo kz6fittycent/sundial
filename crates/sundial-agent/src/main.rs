@@ -67,6 +67,8 @@ struct Ui {
     small: gtk::Label,
     status: Option<AgentStatus>,
     greeted: bool,
+    /// Last thing said about location.
+    told_location: bool,
     warned_early: bool,
     /// Deadline the current countdown is for.
     countdown_for: Option<i64>,
@@ -105,6 +107,16 @@ impl Ui {
             if st.remaining_secs.is_some() {
                 self.notify("Sundial", &st.message, false);
             }
+        }
+        if st.location != self.told_location {
+            self.told_location = st.location;
+            let n = gio::Notification::new("Location");
+            n.set_body(Some(if st.location {
+                "Your parents can see where this computer is."
+            } else {
+                "Your parents no longer see where this computer is."
+            }));
+            self.app.send_notification(Some("sundial-location"), &n);
         }
         if let Some(r) = st.remaining_secs {
             if r > EARLY_WARNING + 60 {
@@ -160,7 +172,14 @@ impl Ui {
                     "<span size='x-large' weight='bold'>{}</span>",
                     glib::markup_escape_text(&big)
                 ));
-                self.small.set_text(&st.message);
+                self.small.set_text(&if st.location {
+                    format!(
+                        "{}\nYour parents can see where this computer is.",
+                        st.message
+                    )
+                } else {
+                    st.message.clone()
+                });
             }
         }
     }
@@ -204,6 +223,7 @@ fn build(app: &gtk::Application) {
         small,
         status: None,
         greeted: false,
+        told_location: false,
         warned_early: false,
         countdown_for: None,
         dismissed: false,

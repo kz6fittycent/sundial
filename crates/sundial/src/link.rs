@@ -302,8 +302,13 @@ fn remote(req: AdminRequest) -> Option<AdminRequest> {
             by: via(by),
             policy,
         }),
+        AdminRequest::SetLocation { by, on } => Some(AdminRequest::SetLocation { by: via(by), on }),
         AdminRequest::Status => None,
     }
+}
+
+pub fn paired() -> bool {
+    load().is_some()
 }
 
 fn apply(daemon: &Shared, applied: &mut Applied, c: Command) -> HostMsg {

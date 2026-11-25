@@ -2,6 +2,7 @@
 
 mod daemon;
 mod link;
+mod location;
 mod logind;
 mod sys;
 mod web;

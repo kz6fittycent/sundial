@@ -19,7 +19,7 @@ description: |
   it adds a PAM check, ends or locks other users' sessions through
   systemd-logind, installs an autostart entry for every desktop session and a
   GNOME Shell extension.
-version: '0.3.0'
+version: '0.3.1'
 license: GPL-3.0-or-later
 website: https://github.com/kz6fittycent/sundial
 source-code: https://github.com/kz6fittycent/sundial

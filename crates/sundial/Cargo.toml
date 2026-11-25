@@ -22,3 +22,4 @@ rpassword = "7"
 libc = "0.2"
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+zbus = { version = "5", default-features = false, features = ["tokio"] }

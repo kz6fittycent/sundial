@@ -7,7 +7,7 @@ if [ -e /usr/share/pam-configs/sundial ]; then
 	rm -f /usr/share/pam-configs/sundial
 fi
 systemctl disable --now sundial.service 2>/dev/null || true
-rm -f /etc/systemd/system/sundial.service /etc/xdg/autostart/sundial-agent.desktop \
+rm -f /etc/systemd/system/sundial.service /etc/geoclue/conf.d/90-sundial.conf /etc/xdg/autostart/sundial-agent.desktop \
 	/usr/share/applications/io.github.kz6fittycent.Sundial.desktop \
 	/usr/local/bin/sundial /usr/local/bin/sundial-agent
 rm -rf /usr/share/gnome-shell/extensions/sundial@kz6fittycent.github.io

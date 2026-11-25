@@ -476,9 +476,10 @@ nav.tabs a:focus-visible{outline:2px solid var(--accent)}
 .who{display:flex;gap:8px;align-items:center}.who select{max-width:100%;font-weight:600;background:var(--card)}
 header{flex-wrap:wrap}header form{min-width:0}.who{flex:1;justify-content:flex-start;margin-left:8px}
 @media(max-width:700px){.panel{grid-template-columns:minmax(0,1fr);gap:14px}
-nav.tabs{flex-direction:row;overflow-x:auto;position:static;min-height:0;border-right:0;border-bottom:1px solid var(--line);padding:0}
+nav.tabs{flex-direction:row;flex-wrap:wrap;position:static;min-height:0;border-right:0;border-bottom:1px solid var(--line);padding:0}
 nav.tabs a{padding:8px 7px;font-size:14px;border-radius:10px 10px 0 0}nav.tabs a[aria-current]{box-shadow:inset 0 -3px var(--accent)}
 .who{order:3;flex-basis:100%;margin:0}.who select{width:100%}}
+a.plain{display:inline-block;border:1px solid var(--line);border-radius:10px;padding:8px 14px;font-weight:600;text-decoration:none;color:var(--ink);background:var(--bg)}
 .code{font:600 22px/1.3 ui-monospace,monospace;letter-spacing:.04em}
 .usage g:hover .past{opacity:.8}
 "#;
@@ -1084,7 +1085,7 @@ fn recent(s: &Section, user: &str, now: &chrono::DateTime<Local>) -> String {
         .status
         .log
         .iter()
-        .filter(|e| e.user == user)
+        .filter(|e| e.user == user || e.user == "sundial")
         .take(25)
         .map(|e| {
             format!(

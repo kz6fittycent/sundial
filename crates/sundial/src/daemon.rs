@@ -14,8 +14,8 @@ use sundial_core::config::{
     ADMIN_SOCKET, AGENT_SOCKET, Action, Config, PolicyUpdate, UserPolicy, edit_user_policy,
 };
 use sundial_core::proto::{
-    ActivityLine, AdminRequest, AdminResponse, AgentReport, AgentStatus, SessionInfo, Tracking,
-    UsageBar, UserStatus,
+    ActivityLine, AdminRequest, AdminResponse, AgentReport, AgentStatus, Fix, Location,
+    SessionInfo, Tracking, UsageBar, UserStatus,
 };
 use sundial_core::rules::{self, Verdict};
 use sundial_core::state::State;
@@ -57,6 +57,7 @@ pub struct Daemon {
     agents: HashMap<String, usize>,
     /// Latest agent report per user, with the time it arrived.
     reports: HashMap<String, (i64, AgentReport)>,
+    location_problem: Option<String>,
 }
 
 pub type Shared = Arc<Mutex<Daemon>>;
@@ -90,6 +91,7 @@ impl Daemon {
             agents_tx,
             agents: HashMap::new(),
             reports: HashMap::new(),
+            location_problem: None,
         })
     }
 
@@ -279,6 +281,7 @@ impl Daemon {
                         "logout"
                     }
                     .into(),
+                    location: self.state.location_on && crate::link::paired(),
                 },
             );
             statuses.push(UserStatus {
@@ -426,6 +429,52 @@ impl Daemon {
         Ok(text)
     }
 
+    pub fn location_on(&self) -> bool {
+        self.state.location_on
+    }
+
+    /// The latest position, or why there isn't one.
+    pub fn set_location(&mut self, r: Result<Fix, String>) {
+        // It may have been turned off while we asked.
+        if !self.state.location_on {
+            return;
+        }
+        match r {
+            Ok(fix) => {
+                self.state.location = Some(fix);
+                self.location_problem = None;
+                self.save();
+            }
+            Err(e) => self.location_problem = Some(e),
+        }
+    }
+
+    fn switch_location(&mut self, by: &str, on: bool) -> &'static str {
+        let text = if on {
+            "location turned on"
+        } else {
+            "location turned off"
+        };
+        if self.state.location_on != on {
+            self.state.location_on = on;
+            self.log("sundial", format!("{text} (by {by})"));
+        }
+        // Off forgets the last position too.
+        self.location_problem = None;
+        if !on {
+            self.state.location = None;
+        }
+        self.save();
+        self.refresh_status();
+        text
+    }
+
+    fn save(&self) {
+        if let Err(e) = self.state.save(&self.state_path) {
+            eprintln!("sundial: saving state: {e}");
+        }
+    }
+
     pub fn handle(&mut self, req: AdminRequest) -> AdminResponse {
         let now = Local::now();
         let mut resp = AdminResponse {
@@ -442,6 +491,9 @@ impl Daemon {
                 }
             }
             self.refresh_status();
+        }
+        if let AdminRequest::SetLocation { by, on } = &req {
+            resp.message = Some(self.switch_location(by, *on).into());
         }
         if let AdminRequest::Act { user, by, action } = req {
             match self.cfg.user(&user).cloned() {
@@ -466,6 +518,11 @@ impl Daemon {
             }
         }
         resp.users = self.statuses.clone();
+        resp.location = Some(Location {
+            on: self.state.location_on,
+            fix: self.state.location,
+            problem: self.location_problem.clone(),
+        });
         resp.log = self.state.log.iter().rev().take(50).cloned().collect();
         resp
     }
@@ -611,6 +668,7 @@ pub async fn run(cfg_path: PathBuf, state_path: PathBuf, web: bool) -> Result<()
     tokio::spawn(agent_server(shared.clone()));
     tokio::spawn(admin_server(shared.clone()));
     tokio::spawn(crate::link::run(shared.clone()));
+    tokio::spawn(crate::location::run(shared.clone()));
     if web && web_cfg.enabled {
         let s = shared.clone();
         tokio::spawn(async move {
@@ -720,6 +778,7 @@ async fn serve_agent(shared: Shared, stream: UnixStream, user: String) {
         deadline: None,
         message: String::new(),
         action: String::new(),
+        location: false,
     };
     let (r, mut w) = stream.into_split();
     // Reports are small; a line this long is not from a real agent.

@@ -20,6 +20,9 @@ pub struct AgentStatus {
     pub message: String,
     /// "logout" or "lock".
     pub action: String,
+    /// A parent can see where this computer is; the agent says so.
+    #[serde(default)]
+    pub location: bool,
 }
 
 /// Agent -> daemon, every few seconds.
@@ -57,6 +60,37 @@ pub enum AdminRequest {
         by: String,
         policy: PolicyUpdate,
     },
+    /// Only for hosts whose status has `location`.
+    SetLocation {
+        by: String,
+        on: bool,
+    },
+}
+
+/// A position. Only the latest is ever kept.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Fix {
+    pub lat: f64,
+    pub lon: f64,
+    pub accuracy_m: f64,
+    pub at: i64,
+}
+
+impl Fix {
+    pub fn valid(&self) -> bool {
+        (-90.0..=90.0).contains(&self.lat)
+            && (-180.0..=180.0).contains(&self.lon)
+            && self.accuracy_m.is_finite()
+            && self.accuracy_m >= 0.0
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Location {
+    pub on: bool,
+    pub fix: Option<Fix>,
+    /// Why there is no newer position.
+    pub problem: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -67,6 +101,9 @@ pub struct AdminResponse {
     pub users: Vec<UserStatus>,
     pub log: Vec<LogEntry>,
     pub now: i64,
+    /// Absent from hosts that can't tell.
+    #[serde(default)]
+    pub location: Option<Location>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
