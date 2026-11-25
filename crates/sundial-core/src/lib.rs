@@ -3,6 +3,7 @@
 
 pub mod activity;
 pub mod config;
+pub mod places;
 pub mod proto;
 pub mod rules;
 pub mod state;

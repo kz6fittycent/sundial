@@ -13,6 +13,7 @@ use sundial_core::activity::{self, Classified};
 use sundial_core::config::{
     ADMIN_SOCKET, AGENT_SOCKET, Action, Config, PolicyUpdate, UserPolicy, edit_user_policy,
 };
+use sundial_core::places::{self, Networks};
 use sundial_core::proto::{
     ActivityLine, AdminRequest, AdminResponse, AgentReport, AgentStatus, Fix, Location,
     SessionInfo, Tracking, UsageBar, UserStatus,
@@ -31,6 +32,8 @@ pub const GRACE_SECS: i64 = 60;
 const DEADLINE_SLACK: i64 = 15;
 /// Agent reports older than this are ignored (agent hung or gone).
 const REPORT_FRESH_SECS: i64 = 20;
+/// A scan older than this doesn't say where the computer is now.
+const NETWORKS_FRESH_SECS: i64 = 180;
 
 /// Per-user enforcement memory; not persisted.
 #[derive(Default)]
@@ -58,6 +61,8 @@ pub struct Daemon {
     /// Latest agent report per user, with the time it arrived.
     reports: HashMap<String, (i64, AgentReport)>,
     location_problem: Option<String>,
+    /// The last scan that saw any networks, and when.
+    networks: Option<(i64, Networks)>,
 }
 
 pub type Shared = Arc<Mutex<Daemon>>;
@@ -92,6 +97,7 @@ impl Daemon {
             agents: HashMap::new(),
             reports: HashMap::new(),
             location_problem: None,
+            networks: None,
         })
     }
 
@@ -449,6 +455,42 @@ impl Daemon {
         }
     }
 
+    pub fn set_networks(&mut self, now: Networks) {
+        if self.state.location_on && !now.is_empty() {
+            self.networks = Some((Local::now().timestamp(), now));
+        }
+    }
+
+    fn add_place(&mut self, by: &str, name: &str) -> Result<String, String> {
+        if !self.state.location_on {
+            return Err("Location is off.".into());
+        }
+        let t = Local::now().timestamp();
+        let seen = match &self.networks {
+            Some((at, n)) if t - at <= NETWORKS_FRESH_SECS => n.clone(),
+            _ => {
+                return Err(
+                    "The computer hasn't seen any Wi-Fi networks in the last few minutes.".into(),
+                );
+            }
+        };
+        let name = places::mark(&mut self.state.places, name, &seen)?;
+        self.log("sundial", format!("place {name} marked (by {by})"));
+        self.save();
+        Ok(format!("{name} marked"))
+    }
+
+    fn remove_place(&mut self, by: &str, name: &str) -> Result<String, String> {
+        let before = self.state.places.len();
+        self.state.places.retain(|p| p.name != name);
+        if self.state.places.len() == before {
+            return Err("There is no such place.".into());
+        }
+        self.log("sundial", format!("place {name} removed (by {by})"));
+        self.save();
+        Ok(format!("{name} removed"))
+    }
+
     fn switch_location(&mut self, by: &str, on: bool) -> &'static str {
         let text = if on {
             "location turned on"
@@ -463,6 +505,7 @@ impl Daemon {
         self.location_problem = None;
         if !on {
             self.state.location = None;
+            self.networks = None;
         }
         self.save();
         self.refresh_status();
@@ -495,6 +538,19 @@ impl Daemon {
         if let AdminRequest::SetLocation { by, on } = &req {
             resp.message = Some(self.switch_location(by, *on).into());
         }
+        let place = match &req {
+            AdminRequest::AddPlace { by, name } => Some(self.add_place(by, name)),
+            AdminRequest::RemovePlace { by, name } => Some(self.remove_place(by, name)),
+            _ => None,
+        };
+        match place {
+            Some(Ok(m)) => resp.message = Some(m),
+            Some(Err(e)) => {
+                resp.ok = false;
+                resp.error = Some(e);
+            }
+            None => {}
+        }
         if let AdminRequest::Act { user, by, action } = req {
             match self.cfg.user(&user).cloned() {
                 None => {
@@ -522,6 +578,13 @@ impl Daemon {
             on: self.state.location_on,
             fix: self.state.location,
             problem: self.location_problem.clone(),
+            places: Some(self.state.places.iter().map(|p| p.name.clone()).collect()),
+            place: self
+                .networks
+                .as_ref()
+                .and_then(|(_, n)| places::recognize(&self.state.places, n))
+                .map(String::from),
+            looked: self.networks.as_ref().map(|(at, _)| *at),
         });
         resp.log = self.state.log.iter().rev().take(50).cloned().collect();
         resp
@@ -669,6 +732,7 @@ pub async fn run(cfg_path: PathBuf, state_path: PathBuf, web: bool) -> Result<()
     tokio::spawn(admin_server(shared.clone()));
     tokio::spawn(crate::link::run(shared.clone()));
     tokio::spawn(crate::location::run(shared.clone()));
+    tokio::spawn(crate::location::watch_networks(shared.clone()));
     if web && web_cfg.enabled {
         let s = shared.clone();
         tokio::spawn(async move {

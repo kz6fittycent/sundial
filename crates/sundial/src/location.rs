@@ -6,6 +6,7 @@ use anyhow::{Context, Result, bail};
 use chrono::Local;
 use std::path::Path;
 use std::time::Duration;
+use sundial_core::places::{Networks, useful};
 use sundial_core::proto::Fix;
 use tokio::process::Command;
 use zbus::zvariant::OwnedObjectPath;
@@ -218,6 +219,49 @@ pub async fn run(daemon: Shared) {
                 .lock()
                 .unwrap()
                 .set_location(r.map_err(|e| format!("{e:#}")));
+        }
+        tokio::time::sleep(POLL).await;
+    }
+}
+
+const SCAN_EVERY: i64 = 60;
+
+/// Addresses of the access points in range, from NetworkManager.
+async fn scan() -> Result<Networks> {
+    let out = Command::new("nmcli")
+        .args(["-t", "-e", "no", "-f", "BSSID", "device", "wifi", "list"])
+        .env("LC_ALL", "C")
+        .kill_on_drop(true)
+        .output()
+        .await
+        .context("running nmcli")?;
+    if !out.status.success() {
+        bail!("nmcli: {}", String::from_utf8_lossy(&out.stderr).trim());
+    }
+    Ok(useful(
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(String::from),
+    ))
+}
+
+/// Keep up with the networks around, to recognize marked places. Works without GeoClue,
+/// and nothing leaves the computer.
+pub async fn watch_networks(daemon: Shared) {
+    let (mut next, mut said) = (0, false);
+    loop {
+        let on = daemon.lock().unwrap().location_on() && crate::link::paired();
+        let now = Local::now().timestamp();
+        if on && (now >= next || next - now > SCAN_EVERY) {
+            next = now + SCAN_EVERY;
+            match tokio::time::timeout(WAIT, scan()).await {
+                Ok(Ok(n)) => daemon.lock().unwrap().set_networks(n),
+                Ok(Err(e)) if !said => {
+                    said = true;
+                    eprintln!("sundial: places: {e:#}");
+                }
+                _ => {}
+            }
         }
         tokio::time::sleep(POLL).await;
     }

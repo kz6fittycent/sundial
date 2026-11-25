@@ -1729,7 +1729,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "sundial"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "axum-server",
@@ -1751,7 +1751,7 @@ dependencies = [
 
 [[package]]
 name = "sundial-agent"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "gtk4",
  "serde_json",
@@ -1761,7 +1761,7 @@ dependencies = [
 
 [[package]]
 name = "sundial-app"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "gtk4",
  "pangocairo",
@@ -1771,7 +1771,7 @@ dependencies = [
 
 [[package]]
 name = "sundial-core"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "chrono",
  "serde",
@@ -1782,7 +1782,7 @@ dependencies = [
 
 [[package]]
 name = "sundial-link"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "rand 0.8.8",
@@ -1795,7 +1795,7 @@ dependencies = [
 
 [[package]]
 name = "sundial-web"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "argon2",

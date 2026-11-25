@@ -65,6 +65,15 @@ pub enum AdminRequest {
         by: String,
         on: bool,
     },
+    /// Mark where the computer is now. Both only for hosts whose `location` has `places`.
+    AddPlace {
+        by: String,
+        name: String,
+    },
+    RemovePlace {
+        by: String,
+        name: String,
+    },
 }
 
 /// A position. Only the latest is ever kept.
@@ -91,6 +100,15 @@ pub struct Location {
     pub fix: Option<Fix>,
     /// Why there is no newer position.
     pub problem: Option<String>,
+    /// Names of the marked places. Absent from hosts without them.
+    #[serde(default)]
+    pub places: Option<Vec<String>>,
+    /// The marked place it is at, as of `looked`.
+    #[serde(default)]
+    pub place: Option<String>,
+    /// When it last saw any networks; None = not yet.
+    #[serde(default)]
+    pub looked: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

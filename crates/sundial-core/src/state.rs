@@ -51,6 +51,7 @@ pub struct State {
     /// A parent turned location on.
     pub location_on: bool,
     pub location: Option<crate::proto::Fix>,
+    pub places: Vec<crate::places::Place>,
     pub log: Vec<LogEntry>,
 }
 

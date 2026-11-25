@@ -78,6 +78,9 @@ pub fn expiry(req: &AdminRequest, now: i64) -> i64 {
             Override::Lock { until: None, .. } | Override::Clear => now + 12 * HOUR,
             _ => now + HOUR / 2,
         },
+        // "Here" must still be here.
+        AdminRequest::AddPlace { .. } => now + 120,
+        AdminRequest::RemovePlace { .. } => now + 7 * 24 * HOUR,
         AdminRequest::Status => now,
     }
 }

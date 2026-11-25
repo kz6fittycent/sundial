@@ -303,6 +303,10 @@ fn remote(req: AdminRequest) -> Option<AdminRequest> {
             policy,
         }),
         AdminRequest::SetLocation { by, on } => Some(AdminRequest::SetLocation { by: via(by), on }),
+        AdminRequest::AddPlace { by, name } => Some(AdminRequest::AddPlace { by: via(by), name }),
+        AdminRequest::RemovePlace { by, name } => {
+            Some(AdminRequest::RemovePlace { by: via(by), name })
+        }
         AdminRequest::Status => None,
     }
 }
